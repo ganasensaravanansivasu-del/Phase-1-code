@@ -184,26 +184,26 @@ def train_phase_A(model, data, start_epoch=1):
         
         # Adaptive sampling reweighting
         if epoch % ADAPTIVE_SAMPLING_EVERY == 0 and 'thermal_pde' in active:
-            # Compute residuals on PDE points
+            # Compute residuals on PDE points (autograd required — no torch.no_grad)
+            x_p, y_p, t_p = data['pde']
+            x_r = x_p.detach().requires_grad_(True)
+            y_r = y_p.detach().requires_grad_(True)
+            t_r = t_p.detach().requires_grad_(True)
+
+            T_s, _, _ = model(x_r, y_r, t_r)
+            props = get_props_star(x_r, y_r, T_s)
+
+            dT_dt = grad(T_s, t_r)
+            dT_dx = grad(T_s, x_r)
+            dT_dy = grad(T_s, y_r)
+
+            d_KdTdx_dx = grad(props['K_star'] * dT_dx, x_r)
+            d_KdTdy_dy = grad(props['K_star'] * dT_dy, y_r)
+
+            fo_inv = torch.tensor(float(FO_INV), dtype=torch.float32, device=DEVICE)
+            R_T = fo_inv * props['rho_star'] * props['cp_star'] * dT_dt - (d_KdTdx_dx + d_KdTdy_dy)
+
             with torch.no_grad():
-                x_p, y_p, t_p = data['pde']
-                x_r = x_p.requires_grad_(True)
-                y_r = y_p.requires_grad_(True)
-                t_r = t_p.requires_grad_(True)
-                
-                T_s, _, _ = model(x_r, y_r, t_r)
-                props = get_props_star(x_r, y_r, T_s)
-                
-                dT_dt = grad(T_s, t_r)
-                dT_dx = grad(T_s, x_r)
-                dT_dy = grad(T_s, y_r)
-                
-                d_KdTdx_dx = grad(props['K_star'] * dT_dx, x_r)
-                d_KdTdy_dy = grad(props['K_star'] * dT_dy, y_r)
-                
-                fo_inv = torch.tensor(float(FO_INV), dtype=torch.float32, device=DEVICE)
-                R_T = fo_inv * props['rho_star'] * props['cp_star'] * dT_dt - (d_KdTdx_dx + d_KdTdy_dy)
-                
                 residuals = R_T.squeeze(-1)**2
                 residual_weights = compute_importance_weights(residuals)
         
