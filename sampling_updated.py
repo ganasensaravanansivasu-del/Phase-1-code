@@ -1,16 +1,11 @@
 """
 =============================================================================
 sampling.py — Collocation Point Sampling with Interface Biasing
-              + Residual-Based Adaptive Importance Reweighting
 =============================================================================
 Methods Implemented:
 1. Interface-Biased Sampling — 40% of interior points concentrated in:
    - FGM layers (3 thin 0.75mm layers)
    - ±0.2mm around each of 5 material interfaces
-
-2. Residual-Based Adaptive Sampling — Fixed dataset, importance reweighting:
-   - Compute residual magnitude at all points
-   - Sample mini-batches with probability ∝ residual^α
 
 Domain (dimensionless):
     x* ∈ [0, 1]       (half width,  symmetry at x*=0)
@@ -30,7 +25,7 @@ from config import (DEVICE, L_REF, T_MAX, t_REF,
                     R_FGM1_STAR, R_FGM2_STAR, R_FGM3_STAR,
                     N_INTERIOR, N_IC, N_BC_TOP, N_BC_BOTTOM,
                     N_BC_INNER, N_BC_LEFT, N_BC_RIGHT, N_INTERFACE,
-                    N_VALIDATION, ADAPTIVE_ALPHA)
+                    N_VALIDATION)
 
 # Dimensionless time range
 T_STAR_MAX = T_MAX / t_REF     # = 1.0
@@ -373,65 +368,3 @@ def prepare_data(phase='A'):
     print(f"{'='*70}\n")
 
     return data
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 7.  ADAPTIVE IMPORTANCE REWEIGHTING (Fixed Dataset)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def compute_importance_weights(residuals, alpha=ADAPTIVE_ALPHA):
-    """
-    Compute importance sampling weights from residual magnitudes.
-
-    Parameters
-    ----------
-    residuals : (N,) tensor — PDE residual magnitude at each point
-    alpha     : float — importance exponent, p_i ∝ R_i^alpha
-
-    Returns
-    -------
-    weights : (N,) tensor — importance sampling probabilities
-    """
-    # Clamp residuals to avoid numerical issues
-    residuals = residuals.clamp(min=1e-12)
-
-    # Importance weight: p_i ∝ R_i^alpha
-    weights = residuals ** alpha
-
-    # Normalize to probabilities
-    weights = weights / weights.sum()
-
-    return weights
-
-
-def adaptive_sample_batch(data_tuple, residuals, batch_size, alpha=ADAPTIVE_ALPHA):
-    """
-    Sample a mini-batch from data using importance weights based on residuals.
-
-    Parameters
-    ----------
-    data_tuple : tuple of tensors (x, y, t) — full dataset
-    residuals  : (N,) tensor — residual magnitude at each point
-    batch_size : int — number of points to sample
-    alpha      : float — importance exponent
-
-    Returns
-    -------
-    batch : tuple of tensors — sampled mini-batch
-    indices : (batch_size,) tensor — indices of sampled points
-    """
-    x_full, y_full, t_full = data_tuple
-    N = x_full.shape[0]
-
-    # Compute importance weights
-    weights = compute_importance_weights(residuals, alpha=alpha)
-
-    # Sample indices according to weights
-    indices = torch.multinomial(weights, batch_size, replacement=False)
-
-    # Extract mini-batch
-    x_batch = x_full[indices]
-    y_batch = y_full[indices]
-    t_batch = t_full[indices]
-
-    return (x_batch, y_batch, t_batch), indices

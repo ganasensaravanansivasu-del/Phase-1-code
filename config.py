@@ -135,15 +135,15 @@ CURRICULUM_STAGES_B = {
 # VALIDATION AND EARLY STOPPING
 # ─────────────────────────────────────────────────────────────────────────────
 N_VALIDATION      = 2000       # number of validation points
-VALIDATION_EVERY  = 500        # evaluate validation every N epochs
-EARLY_STOP_PATIENCE = 2000     # stop if no improvement for N epochs (only in Stage 3)
+VALIDATION_EVERY  = 50         # evaluate validation every N epochs
+EARLY_STOP_PATIENCE = 500      # stop if no improvement for N epochs (only in Stage 3)
 EARLY_STOP_MIN_DELTA = 1e-6    # minimum improvement to count as improvement
+EARLY_STOP_LOSS_THRESHOLD = 1e-2  # stop if both training and validation loss < this value
 
 # ─────────────────────────────────────────────────────────────────────────────
-# RESIDUAL-BASED ADAPTIVE SAMPLING (Fixed Dataset with Importance Reweighting)
+# INTERFACE-BIASED SAMPLING (Fixed Dataset)
 # ─────────────────────────────────────────────────────────────────────────────
-ADAPTIVE_SAMPLING_EVERY  = 500        # recompute importance weights every N epochs
-ADAPTIVE_ALPHA           = 0.5        # importance weight exponent: p_i ∝ R_i^alpha
+# No additional parameters needed - interface biasing is done during initial sampling
 
 # ─────────────────────────────────────────────────────────────────────────────
 # INTERFACE LOSS NORMALIZATION

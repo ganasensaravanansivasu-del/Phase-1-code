@@ -23,9 +23,8 @@ from config import (DEVICE, CURRICULUM_STAGES_A, CURRICULUM_STAGES_B,
                     N_EPOCHS_ADAM, N_EPOCHS_LBFGS, N_EPOCHS_TOTAL,
                     LR_ADAM, LR_ADAM_MIN, SWA_START, SWA_LR, N_ADAM_AFTER_SWA,
                     VALIDATION_EVERY, EARLY_STOP_PATIENCE, EARLY_STOP_MIN_DELTA,
-                    ADAPTIVE_SAMPLING_EVERY, SAVE_EVERY, CKPT_DIR)
+                    EARLY_STOP_LOSS_THRESHOLD, SAVE_EVERY, CKPT_DIR)
 from losses_updated import *
-from sampling_updated import compute_importance_weights
 
 def get_current_stage(epoch, curriculum):
     """Get current curriculum stage"""
@@ -168,6 +167,15 @@ def train_phase_A(model, data, start_epoch=1):
             
             # Early stopping (only in Stage 3)
             if stage == 3:
+                # Stop if both training and validation losses are below threshold
+                current_train_loss = loss_dict['total']
+                if current_train_loss < EARLY_STOP_LOSS_THRESHOLD and val_loss < EARLY_STOP_LOSS_THRESHOLD:
+                    print(f"  [Early Stop] Loss threshold reached!")
+                    print(f"  Training loss: {current_train_loss:.4e}, Validation loss: {val_loss:.4e}")
+                    print(f"  Both below threshold: {EARLY_STOP_LOSS_THRESHOLD:.4e}")
+                    break
+                
+                # Also stop if no improvement for patience epochs
                 if val_loss < best_val_loss - EARLY_STOP_MIN_DELTA:
                     best_val_loss = val_loss
                     best_epoch = epoch
@@ -181,31 +189,6 @@ def train_phase_A(model, data, start_epoch=1):
                     break
         else:
             history['validation'].append(history['validation'][-1] if history['validation'] else 0.0)
-        
-        # Adaptive sampling reweighting
-        if epoch % ADAPTIVE_SAMPLING_EVERY == 0 and 'thermal_pde' in active:
-            # Compute residuals on PDE points (autograd required — no torch.no_grad)
-            x_p, y_p, t_p = data['pde']
-            x_r = x_p.detach().requires_grad_(True)
-            y_r = y_p.detach().requires_grad_(True)
-            t_r = t_p.detach().requires_grad_(True)
-
-            T_s, _, _ = model(x_r, y_r, t_r)
-            props = get_props_star(x_r, y_r, T_s)
-
-            dT_dt = grad(T_s, t_r)
-            dT_dx = grad(T_s, x_r)
-            dT_dy = grad(T_s, y_r)
-
-            d_KdTdx_dx = grad(props['K_star'] * dT_dx, x_r)
-            d_KdTdy_dy = grad(props['K_star'] * dT_dy, y_r)
-
-            fo_inv = torch.tensor(float(FO_INV), dtype=torch.float32, device=DEVICE)
-            R_T = fo_inv * props['rho_star'] * props['cp_star'] * dT_dt - (d_KdTdx_dx + d_KdTdy_dy)
-
-            with torch.no_grad():
-                residuals = R_T.squeeze(-1)**2
-                residual_weights = compute_importance_weights(residuals)
         
         # Checkpoint
         if epoch % SAVE_EVERY == 0:
@@ -358,6 +341,15 @@ def train_phase_B(model_elastic, model_thermal_frozen, data, start_epoch=1):
             history['validation'].append(val_loss)
             
             if stage == 3:
+                # Stop if both training and validation losses are below threshold
+                current_train_loss = loss_dict['total']
+                if current_train_loss < EARLY_STOP_LOSS_THRESHOLD and val_loss < EARLY_STOP_LOSS_THRESHOLD:
+                    print(f"  [Early Stop] Loss threshold reached!")
+                    print(f"  Training loss: {current_train_loss:.4e}, Validation loss: {val_loss:.4e}")
+                    print(f"  Both below threshold: {EARLY_STOP_LOSS_THRESHOLD:.4e}")
+                    break
+                
+                # Also stop if no improvement for patience epochs
                 if val_loss < best_val_loss - EARLY_STOP_MIN_DELTA:
                     best_val_loss = val_loss
                     best_epoch = epoch
