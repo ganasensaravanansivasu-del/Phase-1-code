@@ -172,6 +172,12 @@ N_BC_RIGHT      = 400         # right edge (radiation)
 N_INTERFACE     = 500         # points per interface × 5 interfaces
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ADAPTIVE SAMPLING
+# ─────────────────────────────────────────────────────────────────────────────
+ADAPTIVE_SAMPLING_EVERY = 500   # recompute importance weights every N epochs
+ADAPTIVE_ALPHA          = 0.7   # blending: weight = α·residual + (1-α)·uniform
+
+# ─────────────────────────────────────────────────────────────────────────────
 # REPRODUCIBILITY
 # ─────────────────────────────────────────────────────────────────────────────
 RANDOM_SEED = 42              # fixed seed for reproducibility
@@ -202,9 +208,6 @@ def print_config():
     print(f"\n  --- Reference Scales ---")
     print(f"  L_ref               : {L_REF*1e3:.1f} mm")
     print(f"  ΔT_ref              : {DT_REF:.2f} K")
-    print(f"  t_ref               : {t_REF:.1f} s")
-    print(f"  u_ref               : {U_REF*1e6:.4f} µm")
-    print(f"  σ_ref               : {SIG_REF:.4e} Pa")
     print(f"  t_ref               : {t_REF:.1f} s  → t* ∈ [0, 1]")
     print(f"  u_ref               : {U_REF*1e6:.4f} µm")
     print(f"  σ_ref               : {SIG_REF:.4e} Pa")
