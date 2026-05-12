@@ -8,14 +8,9 @@ Usage:
 """
 
 import torch
-import torch._functorch.config
 import numpy as np
 import argparse
 import os
-
-# donated_buffer optimization in reduce-overhead mode conflicts with
-# create_graph=True required for PDE second-order gradients
-torch._functorch.config.donated_buffer = False
 
 from config import DEVICE, RANDOM_SEED
 from network_updated import PINNModel
@@ -69,11 +64,6 @@ def main():
         model = PINNModel(phase='A').to(DEVICE)
         model.load_state_dict(checkpoint['model_state_dict'])
         
-        try:
-            model = torch.compile(model, mode='reduce-overhead')
-        except:
-            pass
-        
         print(f"Model loaded, continuing training...\n")
         
         # Continue training
@@ -98,10 +88,6 @@ def main():
         model_elastic = PINNModel(phase='B').to(DEVICE)
         model_elastic.load_state_dict(checkpoint['model_state_dict'])
         
-        try:
-            model_elastic = torch.compile(model_elastic, mode='reduce-overhead')
-        except:
-            pass
         
         print(f"Models loaded, continuing training...\n")
         

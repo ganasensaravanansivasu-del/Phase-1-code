@@ -17,14 +17,9 @@ if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 import torch
-import torch._functorch.config
 import numpy as np
 import argparse
 import os
-
-# donated_buffer optimization in reduce-overhead mode conflicts with
-# create_graph=True required for PDE second-order gradients
-torch._functorch.config.donated_buffer = False
 
 from config import DEVICE, RANDOM_SEED, print_config
 from network_updated import PINNModel
@@ -68,7 +63,8 @@ def main():
     # Print configuration
     print_config()
     
-    # Enable torch.compile for speedup
+    # torch.compile uses AOT autograd which does not support double backward
+    # (create_graph=True) required for PINN PDE losses — do not use it.
     torch.set_float32_matmul_precision('high')
     
     if args.phase == 'A':
@@ -81,17 +77,6 @@ def main():
         
         # Create model
         model = PINNModel(phase='A').to(DEVICE)
-        
-        # torch.compile requires a C++ compiler on Windows and conflicts with
-        # create_graph=True used in PDE losses; skip it on CPU.
-        if torch.cuda.is_available():
-            try:
-                model = torch.compile(model, mode='reduce-overhead')
-                print("✓ Model compiled with torch.compile\n")
-            except Exception:
-                print("⚠ torch.compile not available, proceeding without compilation\n")
-        else:
-            print("⚠ Skipping torch.compile on CPU (not beneficial)\n")
         
         # Count parameters
         n_net, n_wts, n_total = model.count_parameters()
@@ -137,16 +122,6 @@ def main():
         # Create elastic model
         model_elastic = PINNModel(phase='B').to(DEVICE)
         
-        # torch.compile requires a C++ compiler on Windows and conflicts with
-        # create_graph=True used in PDE losses; skip it on CPU.
-        if torch.cuda.is_available():
-            try:
-                model_elastic = torch.compile(model_elastic, mode='reduce-overhead')
-                print("✓ Elastic model compiled\n")
-            except Exception:
-                print("⚠ torch.compile not available\n")
-        else:
-            print("⚠ Skipping torch.compile on CPU (not beneficial)\n")
         
         # Count parameters
         n_net, n_wts, n_total = model_elastic.count_parameters()
