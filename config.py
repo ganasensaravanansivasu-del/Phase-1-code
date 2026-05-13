@@ -90,7 +90,7 @@ Y_MAX_STAR    = Y_MAX / L_REF      # = +2.0
 # NEURAL NETWORK HYPERPARAMETERS
 # ─────────────────────────────────────────────────────────────────────────────
 HIDDEN_LAYERS  = 5
-HIDDEN_NEURONS = 128
+HIDDEN_NEURONS = 64
 DROPOUT_RATE   = 0.0          # set to 0 — removed as decided
 
 # Multi-scale Fourier Feature parameters
