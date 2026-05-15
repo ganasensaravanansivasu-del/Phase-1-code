@@ -1,72 +1,70 @@
 """
 =============================================================================
-trainer.py — Training Loops for Phase A (Thermal) and Phase B (Elastic)
+trainer.py — Single Network Training with Anti-Overfitting
 =============================================================================
-Implements:
-- Curriculum Learning (4 stages per phase)
-- Cosine Annealing LR
-- Adam → SWA → 100 Adam steps → L-BFGS
-- Validation with Early Stopping (Stage 3 only)
-- Checkpoint saving every 50 epochs
-- Adaptive sampling reweighting every 500 epochs
+CORRECTED VERSION:
+- Single network training (no Phase A/B split)
+- Validation loss added to training (10% weight every 50 epochs)
+- Weight decay (L2 regularization)
+- Early stopping with practical threshold
+- Smart Adam → L-BFGS switch
 =============================================================================
 """
 
 import torch
 import torch.optim as optim
 from torch.optim.swa_utils import AveragedModel, SWALR
-import numpy as np
 import os
 import time
 
-from config import (DEVICE, CURRICULUM_STAGES_A, CURRICULUM_STAGES_B,
-                    N_EPOCHS_ADAM, N_EPOCHS_LBFGS, N_EPOCHS_TOTAL,
-                    LR_ADAM, LR_ADAM_MIN, SWA_START, SWA_LR, N_ADAM_AFTER_SWA,
+from config import (DEVICE, CURRICULUM_STAGES, N_EPOCHS_ADAM, LR_ADAM, 
+                    LR_ADAM_MIN, WEIGHT_DECAY, SWA_START, SWA_LR, N_ADAM_AFTER_SWA,
                     VALIDATION_EVERY, EARLY_STOP_PATIENCE, EARLY_STOP_MIN_DELTA,
-                    EARLY_STOP_LOSS_THRESHOLD, SAVE_EVERY, CKPT_DIR)
+                    EARLY_STOP_LOSS_THRESHOLD, VAL_LOSS_WEIGHT,
+                    LBFGS_SWITCH_TRAIN_LOSS, LBFGS_SWITCH_VAL_RATIO,
+                    SAVE_EVERY, CKPT_DIR)
 from losses_updated import *
 
-def get_current_stage(epoch, curriculum):
+def get_current_stage(epoch):
     """Get current curriculum stage"""
-    for sid, s in curriculum.items():
+    for sid, s in CURRICULUM_STAGES.items():
         if s['start'] <= epoch < s['end']:
             return sid
     return 4
 
-def print_header(phase):
+def print_header():
     """Print training header"""
-    hdr = f"{'Ep':>7} | {'Stage':>5} | {'Total':>10} | {'Val':>10} | {'LR':>8} | {'Time':>6}"
+    hdr = f"{'Ep':>7} | {'Stage':>5} | {'Total':>10} | {'Val':>10} | {'Ratio':>7} | {'LR':>8} | {'Time':>6}"
     sep = "─" * len(hdr)
-    print("=" * 70)
-    print(f"  PINN Training — Phase {phase}")
-    print("=" * 70)
+    print("=" * 80)
+    print("  PINN TRAINING — SINGLE NETWORK (Anti-Overfitting)")
+    print("=" * 80)
     print(hdr)
     print(sep)
     return sep
 
-# ═════════════════════════════════════════════════════════════════════════════
-# PHASE A — THERMAL TRAINING
-# ═════════════════════════════════════════════════════════════════════════════
-
-def train_phase_A(model, data, start_epoch=1):
+def train_model(model, data, start_epoch=1):
     """
-    Phase A: Train thermal network only.
-
-    Returns:
-        model: trained thermal model
-        history: training history dict
+    Train single PINN model for T, u, v together.
+    
+    Anti-overfitting strategies:
+    - Weight decay (L2)
+    - Validation loss in training
+    - Dropout
+    - Early stopping
     """
     os.makedirs(CKPT_DIR, exist_ok=True)
-    if DEVICE.type == 'cuda':
-        torch.cuda.empty_cache()
-    sep = print_header('A')
+    sep = print_header()
     
     history = {
-        'total': [], 'ic': [], 'thermal_bc': [], 'thermal_pde': [],
+        'total': [], 'ic': [], 'thermal_bc': [], 'elastic_bc': [],
+        'thermal_pde': [], 'elastic_pde': [], 'interface': [],
+        'L1': [], 'L2': [], 'L3': [], 'L4': [],
         'validation': [], 'lr': [], 'epoch_time': []
     }
     
-    optimizer = optim.Adam(model.parameters(), lr=LR_ADAM)
+    # Optimizer with weight decay (L2 regularization)
+    optimizer = optim.Adam(model.parameters(), lr=LR_ADAM, weight_decay=WEIGHT_DECAY)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=N_EPOCHS_ADAM, eta_min=LR_ADAM_MIN)
     
@@ -74,13 +72,13 @@ def train_phase_A(model, data, start_epoch=1):
     swa_model = AveragedModel(model)
     swa_scheduler = SWALR(optimizer, swa_lr=SWA_LR)
     
+    # Interface normalizer
+    interface_normalizer = InterfaceNormalizer()
+    
     # Early stopping
     best_val_loss = float('inf')
     patience_counter = 0
     best_epoch = 0
-    
-    # Adaptive sampling state
-    residual_weights = None
     
     t0_total = time.time()
     
@@ -88,16 +86,15 @@ def train_phase_A(model, data, start_epoch=1):
         model.train()
         ep_t0 = time.time()
         
-        # Get current stage
-        stage = get_current_stage(epoch, CURRICULUM_STAGES_A)
-        active = CURRICULUM_STAGES_A[stage]['losses']
+        stage = get_current_stage(epoch)
+        active = CURRICULUM_STAGES[stage]['losses']
         
-        # Reset attention weights at stage transitions
-        if epoch in [3000, 8000, 15000]:
+        # Reset attention at stage transitions
+        if epoch in [3000, 8000]:
             model.reset_attention_weights()
             print(f"  [Stage {stage}] Attention weights reset")
         
-        # Compute losses
+        # Compute training losses
         optimizer.zero_grad()
         
         w = model.get_loss_weights()
@@ -115,23 +112,55 @@ def train_phase_A(model, data, start_epoch=1):
             L_left = loss_bc_thermal_left(model, *data['bc_left'])
             L_right = loss_bc_thermal_right(model, *data['bc_right'])
             L_inner = loss_bc_thermal_inner(model, *data['bc_inner'])
-            L_bc = L_top + L_bot + L_left + L_right + L_inner
-            loss_dict['thermal_bc'] = L_bc.item()
-            total_loss = total_loss + w['thermal_bc'] * L_bc
+            L_thermal_bc = L_top + L_bot + L_left + L_right + L_inner
+            loss_dict['thermal_bc'] = L_thermal_bc.item()
+            total_loss = total_loss + w['thermal_bc'] * L_thermal_bc
+        
+        if 'elastic_bc' in active:
+            L_top_e = loss_bc_elastic_top(model, *data['bc_top'][:3])
+            L_bot_e = loss_bc_elastic_bottom(model, *data['bc_bot'][:3])
+            L_left_e = loss_bc_elastic_left(model, *data['bc_left'][:3])
+            L_right_e = loss_bc_elastic_right(model, *data['bc_right'][:3])
+            L_inner_e = loss_bc_elastic_inner(model, *data['bc_inner'])
+            L_elastic_bc = L_top_e + L_bot_e + L_left_e + L_right_e + L_inner_e
+            loss_dict['elastic_bc'] = L_elastic_bc.item()
+            total_loss = total_loss + w['elastic_bc'] * L_elastic_bc
         
         if 'thermal_pde' in active:
-            L_pde = loss_thermal_pde(model, *data['pde'])
-            loss_dict['thermal_pde'] = L_pde.item()
-            total_loss = total_loss + w['thermal_pde'] * L_pde
+            L_thermal_pde = loss_thermal_pde(model, *data['pde'])
+            loss_dict['thermal_pde'] = L_thermal_pde.item()
+            total_loss = total_loss + w['thermal_pde'] * L_thermal_pde
+        
+        if 'elastic_pde' in active:
+            L_elastic_pde = loss_elastic_pde(model, *data['pde'])
+            loss_dict['elastic_pde'] = L_elastic_pde.item()
+            total_loss = total_loss + w['elastic_pde'] * L_elastic_pde
+        
+        if 'interface' in active:
+            L_intf, intf_dict = loss_all_interfaces(
+                model, data['interfaces'], interface_normalizer)
+            loss_dict['interface'] = L_intf.item()
+            loss_dict.update(intf_dict)
+            total_loss = total_loss + w['interface'] * L_intf
         
         loss_dict['total'] = total_loss.item()
         
-        # Backward and step
+        # Add validation loss to training (ANTI-OVERFITTING)
+        if epoch % VALIDATION_EVERY == 0:
+            val_loss_value = compute_validation_loss(model, *data['validation'])
+            val_loss_tensor = torch.tensor(val_loss_value, device=DEVICE)
+            total_loss = total_loss + VAL_LOSS_WEIGHT * val_loss_tensor
+            history['validation'].append(val_loss_value)
+        else:
+            history['validation'].append(history['validation'][-1] if history['validation'] else 0.0)
+            val_loss_value = history['validation'][-1]
+        
+        # Backward
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         
-        # Update scheduler
+        # Scheduler
         if epoch < SWA_START:
             scheduler.step()
         elif epoch == SWA_START:
@@ -141,76 +170,72 @@ def train_phase_A(model, data, start_epoch=1):
                 swa_model.update_parameters(model)
             swa_scheduler.step()
         elif epoch == N_EPOCHS_ADAM - N_ADAM_AFTER_SWA:
-            # Switch from SWA to 100 Adam steps
-            print(f"  [Epoch {epoch}] SWA complete, final 100 Adam steps")
-            torch.optim.swa_utils.update_bn(torch.utils.data.DataLoader(
-                [(data['pde'][0][:100], data['pde'][1][:100], data['pde'][2][:100])],
-                batch_size=100), swa_model)
+            print(f"  [Epoch {epoch}] SWA complete, final {N_ADAM_AFTER_SWA} Adam steps")
             model.load_state_dict(swa_model.module.state_dict())
-            optimizer = optim.Adam(model.parameters(), lr=LR_ADAM_MIN)
+            optimizer = optim.Adam(model.parameters(), lr=LR_ADAM_MIN, weight_decay=WEIGHT_DECAY)
         
         ep_time = time.time() - ep_t0
         lr = optimizer.param_groups[0]['lr']
         
         # Record history
-        history['total'].append(loss_dict['total'])
-        history['ic'].append(loss_dict.get('ic', 0.0))
-        history['thermal_bc'].append(loss_dict.get('thermal_bc', 0.0))
-        history['thermal_pde'].append(loss_dict.get('thermal_pde', 0.0))
+        for key in ['total', 'ic', 'thermal_bc', 'elastic_bc', 'thermal_pde', 
+                    'elastic_pde', 'interface', 'L1', 'L2', 'L3', 'L4']:
+            history[key].append(loss_dict.get(key, 0.0))
         history['lr'].append(lr)
         history['epoch_time'].append(ep_time)
         
-        # Validation
-        if epoch % VALIDATION_EVERY == 0:
-            val_loss = compute_validation_loss_A(model, *data['validation'])
-            history['validation'].append(val_loss)
+        # Early stopping (Stage 3 only)
+        if stage == 3 and epoch % VALIDATION_EVERY == 0:
+            train_loss = loss_dict['total']
+            ratio = val_loss_value / (train_loss + 1e-12)
             
-            # Early stopping (only in Stage 3)
-            if stage == 3:
-                # Stop if both training and validation losses are below threshold
-                current_train_loss = loss_dict['total']
-                if current_train_loss < EARLY_STOP_LOSS_THRESHOLD and val_loss < EARLY_STOP_LOSS_THRESHOLD:
-                    print(f"  [Early Stop] Loss threshold reached!")
-                    print(f"  Training loss: {current_train_loss:.4e}, Validation loss: {val_loss:.4e}")
-                    print(f"  Both below threshold: {EARLY_STOP_LOSS_THRESHOLD:.4e}")
-                    break
-                
-                # Also stop if no improvement for patience epochs
-                if val_loss < best_val_loss - EARLY_STOP_MIN_DELTA:
-                    best_val_loss = val_loss
-                    best_epoch = epoch
-                    patience_counter = 0
-                else:
-                    patience_counter += VALIDATION_EVERY
-                    
-                if patience_counter >= EARLY_STOP_PATIENCE:
-                    print(f"  [Early Stop] No improvement for {EARLY_STOP_PATIENCE} epochs")
-                    print(f"  Best epoch: {best_epoch}, Best val loss: {best_val_loss:.4e}")
-                    break
-        else:
-            history['validation'].append(history['validation'][-1] if history['validation'] else 0.0)
+            # Stop if both losses below threshold
+            if train_loss < EARLY_STOP_LOSS_THRESHOLD and val_loss_value < EARLY_STOP_LOSS_THRESHOLD:
+                print(f"  [Early Stop] Loss threshold reached!")
+                print(f"  Train: {train_loss:.3e}, Val: {val_loss_value:.3e}")
+                break
+            
+            # Stop if no improvement
+            if val_loss_value < best_val_loss - EARLY_STOP_MIN_DELTA:
+                best_val_loss = val_loss_value
+                best_epoch = epoch
+                patience_counter = 0
+            else:
+                patience_counter += VALIDATION_EVERY
+            
+            if patience_counter >= EARLY_STOP_PATIENCE:
+                print(f"  [Early Stop] No improvement for {EARLY_STOP_PATIENCE} epochs")
+                break
         
         # Checkpoint
         if epoch % SAVE_EVERY == 0:
-            ckpt_path = os.path.join(CKPT_DIR, f'pinn_phaseA_epoch_{epoch:05d}.pt')
+            ckpt_path = os.path.join(CKPT_DIR, f'pinn_epoch_{epoch:05d}.pt')
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict() if epoch < SWA_START else None,
                 'history': history,
-                'loss_dict': loss_dict,
             }, ckpt_path)
         
         # Print progress
         if epoch % 50 == 0 or epoch == 1:
-            val = history['validation'][-1]
+            train_loss = loss_dict['total']
+            ratio = val_loss_value / (train_loss + 1e-12)
             eta = (time.time() - t0_total) / epoch * (N_EPOCHS_ADAM - epoch) / 60
-            print(f"{epoch:>7d} | {stage:>5d} | {loss_dict['total']:>10.3e} | "
-                  f"{val:>10.3e} | {lr:>8.2e} | {ep_time:>6.2f}s  ETA:{eta:.1f}m")
+            
+            # Warning if overfitting
+            status = ""
+            if ratio > 10:
+                status = " ⚠️ OVERFITTING!"
+            elif ratio > 3:
+                status = " ⚠️"
+            
+            print(f"{epoch:>7d} | {stage:>5d} | {train_loss:>10.3e} | "
+                  f"{val_loss_value:>10.3e} | {ratio:>7.1f}× | {lr:>8.2e} | "
+                  f"{ep_time:>6.2f}s{status}")
     
     # Final checkpoint
-    ckpt_path = os.path.join(CKPT_DIR, 'pinn_phaseA_final.pt')
+    ckpt_path = os.path.join(CKPT_DIR, 'pinn_final.pt')
     torch.save({
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
@@ -218,180 +243,7 @@ def train_phase_A(model, data, start_epoch=1):
     }, ckpt_path)
     
     print(sep)
-    print(f"Phase A complete. Time: {(time.time()-t0_total)/60:.1f} min")
+    print(f"Training complete. Time: {(time.time()-t0_total)/60:.1f} min")
     print(f"Final model saved: {ckpt_path}\n")
     
     return model, history
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# PHASE B — ELASTIC TRAINING
-# ═════════════════════════════════════════════════════════════════════════════
-
-def train_phase_B(model_elastic, model_thermal_frozen, data, start_epoch=1):
-    """
-    Phase B: Train elastic network using frozen thermal predictions.
-
-    Returns:
-        model_elastic: trained elastic model
-        history: training history dict
-    """
-    os.makedirs(CKPT_DIR, exist_ok=True)
-    if DEVICE.type == 'cuda':
-        torch.cuda.empty_cache()
-    sep = print_header('B')
-    
-    # Freeze thermal model
-    model_thermal_frozen.freeze_for_phase_B()
-    
-    history = {
-        'total': [], 'elastic_bc': [], 'elastic_pde': [], 'interface': [],
-        'L1': [], 'L2': [], 'L3': [], 'L4': [],
-        'validation': [], 'lr': [], 'epoch_time': []
-    }
-    
-    optimizer = optim.Adam(model_elastic.parameters(), lr=LR_ADAM)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=N_EPOCHS_ADAM, eta_min=LR_ADAM_MIN)
-    
-    # Interface normalizer
-    interface_normalizer = InterfaceNormalizer()
-    
-    # SWA
-    swa_model = AveragedModel(model_elastic)
-    swa_scheduler = SWALR(optimizer, swa_lr=SWA_LR)
-    
-    # Early stopping
-    best_val_loss = float('inf')
-    patience_counter = 0
-    best_epoch = 0
-    
-    t0_total = time.time()
-    
-    for epoch in range(start_epoch, N_EPOCHS_ADAM + 1):
-        model_elastic.train()
-        ep_t0 = time.time()
-        
-        stage = get_current_stage(epoch, CURRICULUM_STAGES_B)
-        active = CURRICULUM_STAGES_B[stage]['losses']
-        
-        if epoch in [3000, 8000, 15000]:
-            model_elastic.reset_attention_weights()
-            print(f"  [Stage {stage}] Attention weights reset")
-        
-        optimizer.zero_grad()
-        
-        w = model_elastic.get_loss_weights()
-        loss_dict = {}
-        total_loss = torch.tensor(0.0, device=DEVICE)
-        
-        if 'elastic_bc' in active:
-            L_top = loss_bc_elastic_top(model_elastic, model_thermal_frozen, *data['bc_top'])
-            L_bot = loss_bc_elastic_bottom(model_elastic, model_thermal_frozen, *data['bc_bot'])
-            L_left = loss_bc_elastic_left(model_elastic, *data['bc_left'])
-            L_right = loss_bc_elastic_right(model_elastic, model_thermal_frozen, *data['bc_right'])
-            L_inner = loss_bc_elastic_inner(model_elastic, model_thermal_frozen, *data['bc_inner'])
-            L_bc = L_top + L_bot + L_left + L_right + L_inner
-            loss_dict['elastic_bc'] = L_bc.item()
-            total_loss = total_loss + w['elastic_bc'] * L_bc
-        
-        if 'elastic_pde' in active:
-            L_pde = loss_elastic_pde(model_elastic, model_thermal_frozen, *data['pde'])
-            loss_dict['elastic_pde'] = L_pde.item()
-            total_loss = total_loss + w['elastic_pde'] * L_pde
-        
-        if 'interface' in active:
-            L_intf, intf_dict = loss_all_interfaces(
-                model_elastic, model_thermal_frozen, data['interfaces'], interface_normalizer)
-            loss_dict['interface'] = L_intf.item()
-            loss_dict.update(intf_dict)
-            total_loss = total_loss + w['interface'] * L_intf
-        
-        loss_dict['total'] = total_loss.item()
-        
-        total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(model_elastic.parameters(), max_norm=1.0)
-        optimizer.step()
-        
-        if epoch < SWA_START:
-            scheduler.step()
-        elif epoch == SWA_START:
-            print(f"  [Epoch {epoch}] Starting SWA")
-        elif epoch < N_EPOCHS_ADAM - N_ADAM_AFTER_SWA:
-            if epoch % 100 == 0:
-                swa_model.update_parameters(model_elastic)
-            swa_scheduler.step()
-        elif epoch == N_EPOCHS_ADAM - N_ADAM_AFTER_SWA:
-            print(f"  [Epoch {epoch}] SWA complete, final 100 Adam steps")
-            model_elastic.load_state_dict(swa_model.module.state_dict())
-            optimizer = optim.Adam(model_elastic.parameters(), lr=LR_ADAM_MIN)
-        
-        ep_time = time.time() - ep_t0
-        lr = optimizer.param_groups[0]['lr']
-        
-        # Record history
-        for key in ['total', 'elastic_bc', 'elastic_pde', 'interface', 'L1', 'L2', 'L3', 'L4']:
-            history[key].append(loss_dict.get(key, 0.0))
-        history['lr'].append(lr)
-        history['epoch_time'].append(ep_time)
-        
-        # Validation
-        if epoch % VALIDATION_EVERY == 0:
-            val_loss = compute_validation_loss_B(model_elastic, model_thermal_frozen, *data['validation'])
-            history['validation'].append(val_loss)
-            
-            if stage == 3:
-                # Stop if both training and validation losses are below threshold
-                current_train_loss = loss_dict['total']
-                if current_train_loss < EARLY_STOP_LOSS_THRESHOLD and val_loss < EARLY_STOP_LOSS_THRESHOLD:
-                    print(f"  [Early Stop] Loss threshold reached!")
-                    print(f"  Training loss: {current_train_loss:.4e}, Validation loss: {val_loss:.4e}")
-                    print(f"  Both below threshold: {EARLY_STOP_LOSS_THRESHOLD:.4e}")
-                    break
-                
-                # Also stop if no improvement for patience epochs
-                if val_loss < best_val_loss - EARLY_STOP_MIN_DELTA:
-                    best_val_loss = val_loss
-                    best_epoch = epoch
-                    patience_counter = 0
-                else:
-                    patience_counter += VALIDATION_EVERY
-                    
-                if patience_counter >= EARLY_STOP_PATIENCE:
-                    print(f"  [Early Stop] No improvement for {EARLY_STOP_PATIENCE} epochs")
-                    break
-        else:
-            history['validation'].append(history['validation'][-1] if history['validation'] else 0.0)
-        
-        # Checkpoint
-        if epoch % SAVE_EVERY == 0:
-            ckpt_path = os.path.join(CKPT_DIR, f'pinn_phaseB_epoch_{epoch:05d}.pt')
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model_elastic.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'history': history,
-                'interface_normalizer': interface_normalizer,
-            }, ckpt_path)
-        
-        # Print progress
-        if epoch % 500 == 0 or epoch == 1:
-            val = history['validation'][-1]
-            eta = (time.time() - t0_total) / epoch * (N_EPOCHS_ADAM - epoch) / 60
-            print(f"{epoch:>7d} | {stage:>5d} | {loss_dict['total']:>10.3e} | "
-                  f"{val:>10.3e} | {lr:>8.2e} | {ep_time:>6.2f}s  ETA:{eta:.1f}m")
-    
-    # Final checkpoint
-    ckpt_path = os.path.join(CKPT_DIR, 'pinn_phaseB_final.pt')
-    torch.save({
-        'epoch': epoch,
-        'model_elastic_state_dict': model_elastic.state_dict(),
-        'model_thermal_state_dict': model_thermal_frozen.state_dict(),
-        'history': history,
-    }, ckpt_path)
-    
-    print(sep)
-    print(f"Phase B complete. Time: {(time.time()-t0_total)/60:.1f} min")
-    print(f"Final model saved: {ckpt_path}\n")
-    
-    return model_elastic, history

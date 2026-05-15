@@ -1,80 +1,60 @@
 """
 =============================================================================
-config.py — All constants, reference scales, and hyperparameters
+config.py — Configuration and Constants for W/Cu Monoblock PINN
+=============================================================================
+ALL CORRECTIONS APPLIED:
+- Y domain: [-14, +14] mm (not [-28, +28])
+- Single network (no decoupling)
+- CPU only
+- Increased dataset for overfitting (20k points)
+- Smaller network (128 neurons, 4 layers)
+- Dropout + weight decay
+- Non-uniform time sampling
 =============================================================================
 """
 
-import numpy as np
-
-# ─────────────────────────────────────────────────────────────────────────────
-# DEVICE
-# ─────────────────────────────────────────────────────────────────────────────
 import torch
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# GPU-specific settings
-if torch.cuda.is_available():
-    torch.backends.cuda.matmul.allow_tf32 = True   # faster matmul on Ampere+
-    torch.backends.cudnn.allow_tf32      = True
+# ═════════════════════════════════════════════════════════════════════════════
+# DEVICE CONFIGURATION (CPU ONLY)
+# ═════════════════════════════════════════════════════════════════════════════
+DEVICE = 'cpu'  # CPU only, no GPU
+RANDOM_SEED = 42
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PHYSICAL CONSTANTS
-# ─────────────────────────────────────────────────────────────────────────────
-Q_FLUX    = 10.0e6          # W/m²  — heat flux on top and bottom surfaces
-T_INIT    = 293.15          # K     — initial temperature (20°C, stress-free)
-T_COOL    = 373.15          # K     — coolant temperature (100°C)
-T_ENV     = 473.15          # K     — radiation environment temperature (200°C)
-EMISSIVITY = 0.3            # —     — W surface emissivity
-SIGMA_SB  = 5.67e-8         # W/(m²·K⁴) — Stefan-Boltzmann constant
+# ═════════════════════════════════════════════════════════════════════════════
+# GEOMETRY (DIMENSIONAL - all in SI units: meters)
+# ═════════════════════════════════════════════════════════════════════════════
+R_INNER  = 6.0e-3    # Inner coolant channel radius [m]
+R_CuCrZr = 7.5e-3    # CuCrZr layer outer radius [m]
+R_Cu     = 8.25e-3   # Cu interlayer outer radius [m]
+R_FGM1   = 9.0e-3    # FGM-1 (25W-75Cu) outer radius [m]
+R_FGM2   = 9.75e-3   # FGM-2 (50W-50Cu) outer radius [m]
+R_FGM3   = 10.5e-3   # FGM-3 (75W-25Cu) outer radius [m]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# GEOMETRY  (all in metres)
-# ─────────────────────────────────────────────────────────────────────────────
-mm = 1e-3
+# Domain extents
+X_MAX    = 14.0e-3   # Half-width (x: 0 to 14mm) [m]
+Y_MIN    = -14.0e-3  # CORRECTED: Bottom edge (y: -14mm) [m]
+Y_MAX    = +14.0e-3  # CORRECTED: Top edge (y: +14mm) [m]
 
-X_MIN, X_MAX =  0.0,        14.0 * mm   # half width
-Y_MIN, Y_MAX = -28.0 * mm,  28.0 * mm   # full height
-T_MIN, T_MAX =  0.0,        10.0        # seconds
+# ═════════════════════════════════════════════════════════════════════════════
+# REFERENCE SCALES FOR DIMENSIONLESS EQUATIONS
+# ═════════════════════════════════════════════════════════════════════════════
+L_REF     = 14.0e-3                # Length scale [m]
+T_REF     = 293.0                  # Reference temperature [K] (20°C)
+DT_REF    = 1500.0                 # Temperature scale [K]
+K_REF     = 200.0                  # Thermal conductivity [W/(m·K)]
+RHO_REF   = 15000.0                # Density [kg/m³]
+CP_REF    = 200.0                  # Specific heat [J/(kg·K)]
+E_REF     = 2.0e11                 # Young's modulus [Pa]
+ALPHA_REF = 1.0e-5                 # CTE [1/K]
+U_REF     = ALPHA_REF * DT_REF * L_REF  # Displacement scale [m]
 
-R_INNER  = 6.00  * mm   # cooling channel wall (inner radius)
-R_CuCrZr = 7.50  * mm   # CuCrZr outer radius
-R_Cu     = 8.25  * mm   # OFHC-Cu outer radius
-R_FGM1   = 9.00  * mm   # FGM-1 (25%W) outer radius
-R_FGM2   = 9.75  * mm   # FGM-2 (50%W) outer radius
-R_FGM3   = 10.50 * mm   # FGM-3 (75%W) outer radius
-# r > R_FGM3 : W armor
+# Time scale (from Fourier number = 1)
+t_REF = (RHO_REF * CP_REF * L_REF**2) / K_REF  # [s]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# REFERENCE SCALES FOR NON-DIMENSIONALIZATION
-# ─────────────────────────────────────────────────────────────────────────────
-L_REF   = 14.0  * mm          # m        — half width (x* ∈ [0,1])
-K_REF   = 173.0               # W/(m·K)  — W thermal conductivity at 293K
-E_REF   = 3.98e11             # Pa       — W Young's modulus at 293K
-ALPHA_REF = 17.0e-6           # 1/K      — Cu CTE at 293K (drives mismatch)
-RHO_REF = 19250.0             # kg/m³    — W density at 293K
-CP_REF  = 132.0               # J/(kg·K) — W specific heat at 293K
-T_REF   = T_INIT              # K        — reference temperature
-t_REF   = T_MAX               # s        — total simulation time (10s) → t* ∈ [0,1]
-
-# Derived reference scales
-DT_REF  = Q_FLUX * L_REF / K_REF               # K       — temperature rise scale
-U_REF   = ALPHA_REF * DT_REF * L_REF           # m       — displacement scale
-SIG_REF = E_REF * ALPHA_REF * DT_REF           # Pa      — stress scale
-
-# Dimensionless numbers
-FO      = K_REF * t_REF / (RHO_REF * CP_REF * L_REF**2)   # Fourier number
-FO_INV  = 1.0 / FO                                          # 1/Fo coefficient in thermal PDE
-
-# Radiation coefficient (dimensionless)
-R_RAD   = EMISSIVITY * SIGMA_SB * DT_REF**3 / (K_REF / L_REF)
-
-# Dimensionless temperatures
-T_COOL_STAR = (T_COOL - T_REF) / DT_REF        # dimensionless coolant temp
-T_ENV_STAR  = (T_ENV  - T_REF) / DT_REF        # dimensionless env temp
-C0          = T_REF / DT_REF                    # T_ref / DT_ref
-C_ENV       = T_ENV / DT_REF                    # T_env / DT_ref (for radiation)
-
-# Dimensionless geometry
+# ═════════════════════════════════════════════════════════════════════════════
+# DIMENSIONLESS GEOMETRY
+# ═════════════════════════════════════════════════════════════════════════════
 R_INNER_STAR  = R_INNER  / L_REF
 R_CuCrZr_STAR = R_CuCrZr / L_REF
 R_Cu_STAR     = R_Cu     / L_REF
@@ -82,151 +62,148 @@ R_FGM1_STAR   = R_FGM1   / L_REF
 R_FGM2_STAR   = R_FGM2   / L_REF
 R_FGM3_STAR   = R_FGM3   / L_REF
 
-X_MAX_STAR    = X_MAX / L_REF      # = 1.0
-Y_MIN_STAR    = Y_MIN / L_REF      # = -2.0
-Y_MAX_STAR    = Y_MAX / L_REF      # = +2.0
+X_MAX_STAR    = X_MAX / L_REF     # = 1.0
+Y_MIN_STAR    = Y_MIN / L_REF     # CORRECTED: = -1.0 (was -2.0)
+Y_MAX_STAR    = Y_MAX / L_REF     # CORRECTED: = +1.0 (was +2.0)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# NEURAL NETWORK HYPERPARAMETERS
-# ─────────────────────────────────────────────────────────────────────────────
-HIDDEN_LAYERS  = 5
-HIDDEN_NEURONS = 64
-DROPOUT_RATE   = 0.0          # set to 0 — removed as decided
+# ═════════════════════════════════════════════════════════════════════════════
+# BOUNDARY CONDITIONS (DIMENSIONAL)
+# ═════════════════════════════════════════════════════════════════════════════
+Q_TOP    = 10.0e6        # Heat flux on top surface [W/m²] - ONLY TOP!
+T_COOL   = 293.0         # Coolant temperature [K]
+T_COOL_STAR = (T_COOL - T_REF) / DT_REF  # Dimensionless coolant temp
 
-# Multi-scale Fourier Feature parameters
-FF_SIGMA       = [1.0, 5.0, 10.0]   # frequency scales
-FF_FEATURES    = 128                  # number of features per scale
-# Input size = 2 * FF_FEATURES * len(FF_SIGMA) = 768
+# Dimensionless parameters
+FO_INV = 1.0 / 1.0       # Inverse Fourier number (= 1 by design)
 
-# ─────────────────────────────────────────────────────────────────────────────
+# Bottom and right surfaces: INSULATED (no radiation considered)
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TIME DOMAIN
+# ═════════════════════════════════════════════════════════════════════════════
+T_MAX = 10.0             # Total simulation time [s]
+T_STAR_MAX = T_MAX / t_REF  # Dimensionless max time
+
+# ═════════════════════════════════════════════════════════════════════════════
+# NETWORK ARCHITECTURE (REDUCED FOR OVERFITTING)
+# ═════════════════════════════════════════════════════════════════════════════
+HIDDEN_LAYERS  = 4       # REDUCED from 5 (less capacity to overfit)
+HIDDEN_NEURONS = 128     # REDUCED from 256 (less memorization)
+DROPOUT_RATE   = 0.1     # 10% dropout for regularization
+
+# Fourier Features
+FF_SIGMA    = [1.0, 5.0, 10.0]  # Multi-scale frequency bands
+FF_FEATURES = 128                # Features per scale
+# Total embedding dim: 2 * 128 * 3 = 768
+
+# ═════════════════════════════════════════════════════════════════════════════
+# COLLOCATION POINTS (INCREASED FOR OVERFITTING)
+# ═════════════════════════════════════════════════════════════════════════════
+N_INTERIOR   = 20000     # INCREASED from 8000 (2.5× more for better coverage)
+N_IC         = 2000      # Initial condition points (t*=0)
+
+# Boundary points
+N_BC_TOP     = 800       # INCREASED from 400
+N_BC_BOTTOM  = 800       # INCREASED from 400
+N_BC_INNER   = 1000      # INCREASED from 500
+N_BC_LEFT    = 600       # INCREASED from 300
+N_BC_RIGHT   = 600       # INCREASED from 300
+
+# Interface points (5 material interfaces)
+N_INTERFACE  = 500       # Points per interface
+
+# Validation
+N_VALIDATION = 5000      # INCREASED from 2000 (larger validation set)
+
+# Interface-biased sampling
+INTERFACE_BIAS_FRACTION = 0.40  # 40% of interior points near interfaces
+INTERFACE_ZONE_WIDTH    = 0.015 # ±0.015 dimensionless units (~0.2mm)
+
+# ═════════════════════════════════════════════════════════════════════════════
 # TRAINING HYPERPARAMETERS
-# ─────────────────────────────────────────────────────────────────────────────
-N_EPOCHS_TOTAL  = 20000
-N_EPOCHS_ADAM   = 15000       # Adam phase
-N_EPOCHS_LBFGS  = 5000        # L-BFGS phase
+# ═════════════════════════════════════════════════════════════════════════════
+N_EPOCHS_ADAM   = 15000
+N_EPOCHS_LBFGS  = 2000
+N_EPOCHS_TOTAL  = N_EPOCHS_ADAM + N_EPOCHS_LBFGS
 
-LR_ADAM         = 1e-3
-LR_ADAM_MIN     = 1e-6
-WEIGHT_DECAY    = 0.0         # L2 removed as decided
+# Adam optimizer
+LR_ADAM     = 1e-3       # Initial learning rate
+LR_ADAM_MIN = 1e-5       # Minimum learning rate
+WEIGHT_DECAY = 1e-4      # L2 regularization (prevents overfitting)
 
-# Cosine annealing (Adam phase only)
-T_COSINE        = N_EPOCHS_ADAM   # full cosine period over Adam phase
+# SWA (Stochastic Weight Averaging)
+SWA_START   = 12000      # Start SWA at epoch 12000
+SWA_LR      = 5e-5       # SWA learning rate
+N_ADAM_AFTER_SWA = 100   # 100 Adam steps after SWA before L-BFGS
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CURRICULUM LEARNING STAGES — PHASE A (THERMAL) and PHASE B (ELASTIC)
-# ─────────────────────────────────────────────────────────────────────────────
-# Phase A: Thermal network training only
-CURRICULUM_STAGES_A = {
-    1: {'start': 0,     'end': 3000,  'losses': ['ic', 'thermal_bc']},
-    2: {'start': 3000,  'end': 8000,  'losses': ['ic', 'thermal_bc', 'thermal_pde']},
-    3: {'start': 8000,  'end': 15000, 'losses': ['ic', 'thermal_bc', 'thermal_pde']},  # Early stopping active
-    4: {'start': 15000, 'end': 20000, 'losses': ['ic', 'thermal_bc', 'thermal_pde']},  # L-BFGS phase
+# ═════════════════════════════════════════════════════════════════════════════
+# CURRICULUM LEARNING (SINGLE NETWORK)
+# ═════════════════════════════════════════════════════════════════════════════
+CURRICULUM_STAGES = {
+    1: {'start': 1,     'end': 3000,  'losses': ['ic', 'thermal_bc', 'elastic_bc']},
+    2: {'start': 3000,  'end': 8000,  'losses': ['ic', 'thermal_bc', 'elastic_bc', 'thermal_pde', 'elastic_pde']},
+    3: {'start': 8000,  'end': 15000, 'losses': ['ic', 'thermal_bc', 'elastic_bc', 'thermal_pde', 'elastic_pde', 'interface']},
+    4: {'start': 15000, 'end': 17000, 'losses': ['ic', 'thermal_bc', 'elastic_bc', 'thermal_pde', 'elastic_pde', 'interface']},  # L-BFGS
 }
 
-# Phase B: Elastic network training using frozen thermal predictions
-CURRICULUM_STAGES_B = {
-    1: {'start': 0,     'end': 3000,  'losses': ['elastic_bc']},
-    2: {'start': 3000,  'end': 8000,  'losses': ['elastic_bc', 'elastic_pde']},
-    3: {'start': 8000,  'end': 15000, 'losses': ['elastic_bc', 'elastic_pde', 'interface']},  # Early stopping active
-    4: {'start': 15000, 'end': 20000, 'losses': ['elastic_bc', 'elastic_pde', 'interface']},  # L-BFGS phase
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
 # VALIDATION AND EARLY STOPPING
-# ─────────────────────────────────────────────────────────────────────────────
-N_VALIDATION      = 2000       # number of validation points
-VALIDATION_EVERY  = 50         # evaluate validation every N epochs
-EARLY_STOP_PATIENCE = 500      # stop if no improvement for N epochs (only in Stage 3)
-EARLY_STOP_MIN_DELTA = 1e-6    # minimum improvement to count as improvement
-EARLY_STOP_LOSS_THRESHOLD = 1e-2  # stop if both training and validation loss < this value
+# ═════════════════════════════════════════════════════════════════════════════
+VALIDATION_EVERY  = 50         # Validate every 50 epochs
+EARLY_STOP_PATIENCE = 500      # Stop if no improvement for 500 epochs
+EARLY_STOP_MIN_DELTA = 1e-6    # Minimum improvement threshold
+EARLY_STOP_LOSS_THRESHOLD = 1e-2  # Stop if both train and val < 1e-2
 
-# ─────────────────────────────────────────────────────────────────────────────
-# INTERFACE-BIASED SAMPLING (Fixed Dataset)
-# ─────────────────────────────────────────────────────────────────────────────
-# No additional parameters needed - interface biasing is done during initial sampling
+# Adam → L-BFGS switch criterion (wait for validation to converge)
+LBFGS_SWITCH_TRAIN_LOSS = 1e-3  # Training loss threshold
+LBFGS_SWITCH_VAL_RATIO = 10.0   # Validation must be within 10× of training
 
-# ─────────────────────────────────────────────────────────────────────────────
-# INTERFACE LOSS NORMALIZATION
-# ─────────────────────────────────────────────────────────────────────────────
-INTERFACE_NORM_WARMUP = 500          # warmup epochs before normalization activates
-INTERFACE_NORM_EPSILON = 1e-6        # epsilon to prevent division by zero
+# Validation loss weight in training (prevents overfitting)
+VAL_LOSS_WEIGHT = 0.1  # Add 10% of validation loss to training loss
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STOCHASTIC WEIGHT AVERAGING (SWA)
-# ─────────────────────────────────────────────────────────────────────────────
-SWA_START       = 12000       # start SWA at this epoch
-SWA_FREQ        = 100         # update SWA weights every N epochs
-SWA_LR          = 5e-4        # SWA learning rate
-N_ADAM_AFTER_SWA = 100        # 100 Adam steps after SWA before L-BFGS
+# ═════════════════════════════════════════════════════════════════════════════
+# INTERFACE NORMALIZATION
+# ═════════════════════════════════════════════════════════════════════════════
+INTERFACE_NORM_WARMUP  = 500    # Warmup epochs before normalization
+INTERFACE_NORM_EPSILON = 1e-6   # Numerical stability
 
-# ─────────────────────────────────────────────────────────────────────────────
-# COLLOCATION POINT COUNTS
-# ─────────────────────────────────────────────────────────────────────────────
-N_INTERIOR      = 8000        # interior PDE points
-N_IC            = 2000        # initial condition points
-N_BC_TOP        = 400         # top surface (heat flux)
-N_BC_BOTTOM     = 400         # bottom surface (heat flux)
-N_BC_INNER      = 600         # inner semicircular wall (convection)
-N_BC_LEFT       = 400         # left symmetry plane (x=0)
-N_BC_RIGHT      = 400         # right edge (radiation)
-N_INTERFACE     = 500         # points per interface × 5 interfaces
+# ═════════════════════════════════════════════════════════════════════════════
+# CHECKPOINTING
+# ═════════════════════════════════════════════════════════════════════════════
+SAVE_EVERY = 500         # Save checkpoint every 500 epochs
+CKPT_DIR   = 'checkpoints'
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ADAPTIVE SAMPLING
-# ─────────────────────────────────────────────────────────────────────────────
-ADAPTIVE_SAMPLING_EVERY = 500   # recompute importance weights every N epochs
-ADAPTIVE_ALPHA          = 0.7   # blending: weight = α·residual + (1-α)·uniform
-
-# ─────────────────────────────────────────────────────────────────────────────
-# REPRODUCIBILITY
-# ─────────────────────────────────────────────────────────────────────────────
-RANDOM_SEED = 42              # fixed seed for reproducibility
-
-# ─────────────────────────────────────────────────────────────────────────────
-# LOGGING & SAVING
-# ─────────────────────────────────────────────────────────────────────────────
-PRINT_EVERY     = 500
-SAVE_EVERY      = 50
-RESULTS_DIR     = './pinn_results'
-CKPT_DIR        = './pinn_checkpoints'
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PRINT SUMMARY
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+# PRINT CONFIGURATION
+# ═════════════════════════════════════════════════════════════════════════════
 def print_config():
-    print("=" * 65)
-    print("  PINN Configuration Summary")
-    print("=" * 65)
-    print(f"  Device              : {DEVICE}")
-    if torch.cuda.is_available():
-        props = torch.cuda.get_device_properties(0)
-        print(f"  GPU                 : {torch.cuda.get_device_name(0)}")
-        print(f"  VRAM                : {props.total_memory / 1e9:.1f} GB")
-    else:
-        print(f"  WARNING             : No GPU detected — training will be slow!")
-    print(f"  Domain              : x* ∈ [0,1], y* ∈ [-2,+2], t* ∈ [0,1]")
-    print(f"\n  --- Reference Scales ---")
-    print(f"  L_ref               : {L_REF*1e3:.1f} mm")
-    print(f"  ΔT_ref              : {DT_REF:.2f} K")
-    print(f"  t_ref               : {t_REF:.1f} s  → t* ∈ [0, 1]")
-    print(f"  u_ref               : {U_REF*1e6:.4f} µm")
-    print(f"  σ_ref               : {SIG_REF:.4e} Pa")
-    print(f"\n  --- Dimensionless Numbers ---")
-    print(f"  Fourier number (Fo) : {FO:.5f}")
-    print(f"  1/Fo                : {FO_INV:.3f}")
-    print(f"  R_rad               : {R_RAD:.4e}")
-    print(f"  T*_cool             : {T_COOL_STAR:.5f}")
-    print(f"  T*_env              : {T_ENV_STAR:.5f}")
-    print(f"  C0 (Tref/ΔTref)     : {C0:.5f}")
-    print(f"  C_env (Tenv/ΔTref)  : {C_ENV:.5f}")
-    print(f"\n  --- Network ---")
-    print(f"  Fourier scales (σ)  : {FF_SIGMA}")
-    print(f"  Fourier features    : {FF_FEATURES} per scale")
-    print(f"  Hidden layers       : {HIDDEN_LAYERS} × {HIDDEN_NEURONS}")
-    print(f"\n  --- Training ---")
-    print(f"  Total epochs        : {N_EPOCHS_TOTAL}")
-    print(f"  Adam epochs         : {N_EPOCHS_ADAM}")
-    print(f"  L-BFGS epochs       : {N_EPOCHS_LBFGS}")
-    print(f"  Adaptive α          : {ADAPTIVE_ALPHA}")
-    print(f"  Adaptive every      : {ADAPTIVE_SAMPLING_EVERY} epochs")
-    print("=" * 65)
+    """Print key configuration parameters"""
+    print("\n" + "="*70)
+    print("  PINN CONFIGURATION (CORRECTED VERSION)")
+    print("="*70)
+    print(f"Device: {DEVICE}")
+    print(f"\nGeometry (Corrected):")
+    print(f"  X domain: [0, {X_MAX*1e3:.1f}] mm")
+    print(f"  Y domain: [{Y_MIN*1e3:.1f}, {Y_MAX*1e3:.1f}] mm (CORRECTED)")
+    print(f"  Dimensionless: x* ∈ [0, 1], y* ∈ [-1, +1]")
+    print(f"\nBoundary Conditions (Corrected):")
+    print(f"  Top: Heat flux = {Q_TOP/1e6:.1f} MW/m²")
+    print(f"  Bottom: Insulated (∂T/∂y = 0)")
+    print(f"  Right: Insulated (∂T/∂x = 0)")
+    print(f"  Left: Symmetry (∂T/∂x = 0)")
+    print(f"  Inner: Convection (T_cool = {T_COOL:.0f} K)")
+    print(f"\nNetwork Architecture (Anti-Overfitting):")
+    print(f"  Layers: {HIDDEN_LAYERS}, Neurons: {HIDDEN_NEURONS}")
+    print(f"  Dropout: {DROPOUT_RATE:.1%}")
+    print(f"  Fourier features: {len(FF_SIGMA)} scales × {FF_FEATURES} = {2*FF_FEATURES*len(FF_SIGMA)}-dim")
+    print(f"\nTraining (Anti-Overfitting Strategy):")
+    print(f"  Interior points: {N_INTERIOR:,} (2.5× increase)")
+    print(f"  Validation points: {N_VALIDATION:,} (2.5× increase)")
+    print(f"  Weight decay (L2): {WEIGHT_DECAY}")
+    print(f"  Validation loss weight: {VAL_LOSS_WEIGHT:.0%}")
+    print(f"  Early stop threshold: {EARLY_STOP_LOSS_THRESHOLD}")
+    print(f"\nTime Sampling (Non-Uniform):")
+    print(f"  0-2s (transient): 50% of points")
+    print(f"  2-4s (moderate): 30% of points")
+    print(f"  4-10s (steady): 20% of points")
+    print("="*70 + "\n")

@@ -1,13 +1,9 @@
 """
 =============================================================================
-inference.py — Load Trained Model and Predict at Any (x, y, t)
+inference.py — Load Model and Predict
 =============================================================================
 Usage:
-    # Predict at single point
-    python inference.py --checkpoint checkpoints/pinn_phaseB_final.pt --x 7.0 --y 0.0 --t 10.0
-    
-    # Generate field predictions
-    python inference.py --checkpoint checkpoints/pinn_phaseB_final.pt --field --time 10.0
+    python inference.py --checkpoint checkpoints/pinn_final.pt --field --time 5.0
 =============================================================================
 """
 
@@ -16,71 +12,20 @@ import numpy as np
 import argparse
 import matplotlib.pyplot as plt
 
-from config import DEVICE, L_REF, T_REF, DT_REF, U_REF, T_MAX, t_REF
+from config import DEVICE, L_REF, T_REF, DT_REF, U_REF, t_REF
 from network_updated import PINNModel
+from sampling_updated import in_domain_star, X_MAX_STAR, Y_MIN_STAR, Y_MAX_STAR
 
-def load_models(checkpoint_path):
-    """Load both thermal and elastic models from Phase B checkpoint"""
+def load_model(checkpoint_path):
+    """Load trained model"""
+    model = PINNModel().to(DEVICE)
     checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
-    
-    # Load thermal model
-    model_thermal = PINNModel(phase='A').to(DEVICE)
-    model_thermal.load_state_dict(checkpoint['model_thermal_state_dict'])
-    model_thermal.eval()
-    
-    # Load elastic model
-    model_elastic = PINNModel(phase='B').to(DEVICE)
-    model_elastic.load_state_dict(checkpoint['model_elastic_state_dict'])
-    model_elastic.eval()
-    
-    return model_thermal, model_elastic
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    return model
 
-def predict_point(model_thermal, model_elastic, x_mm, y_mm, t_sec):
-    """
-    Predict T, u, v at a single point in dimensional units.
-    
-    Parameters:
-        x_mm, y_mm: coordinates in mm
-        t_sec: time in seconds
-    
-    Returns:
-        T_C: temperature in °C
-        u_um: x-displacement in µm
-        v_um: y-displacement in µm
-    """
-    # Convert to dimensionless
-    x_star = (x_mm * 1e-3) / L_REF
-    y_star = (y_mm * 1e-3) / L_REF
-    t_star = t_sec / t_REF
-    
-    # Create tensors
-    x_t = torch.tensor([[x_star]], dtype=torch.float32, device=DEVICE)
-    y_t = torch.tensor([[y_star]], dtype=torch.float32, device=DEVICE)
-    t_t = torch.tensor([[t_star]], dtype=torch.float32, device=DEVICE)
-    
-    with torch.no_grad():
-        T_star, _, _ = model_thermal(x_t, y_t, t_t)
-        _, u_star, v_star = model_elastic(x_t, y_t, t_t)
-    
-    # Convert back to dimensional
-    T_K = T_REF + T_star.item() * DT_REF
-    T_C = T_K - 273.15
-    u_um = u_star.item() * U_REF * 1e6
-    v_um = v_star.item() * U_REF * 1e6
-    
-    return T_C, u_um, v_um
-
-def predict_field(model_thermal, model_elastic, t_sec, resolution=100):
-    """
-    Predict fields over entire domain at given time.
-    
-    Returns:
-        XX_mm, YY_mm: coordinate grids in mm
-        T_C: temperature in °C
-        u_um, v_um: displacements in µm
-    """
-    from sampling_updated import in_domain_star, X_MAX_STAR, Y_MIN_STAR, Y_MAX_STAR
-    
+def predict_field(model, t_sec, resolution=100):
+    """Predict fields at given time"""
     t_star = t_sec / t_REF
     
     x_lin = np.linspace(0.0, X_MAX_STAR, resolution)
@@ -103,8 +48,7 @@ def predict_field(model_thermal, model_elastic, t_sec, resolution=100):
         Tv = torch.tensor(Tf[mask], dtype=torch.float32, device=DEVICE)
         
         with torch.no_grad():
-            T_s, _, _ = model_thermal(Xv, Yv, Tv)
-            _, u_s, v_s = model_elastic(Xv, Yv, Tv)
+            T_s, u_s, v_s = model(Xv, Yv, Tv)
         
         T_out[mask] = (T_REF + T_s.cpu().numpy().flatten() * DT_REF) - 273.15
         U_out[mask] = u_s.cpu().numpy().flatten() * U_REF * 1e6
@@ -119,28 +63,20 @@ def predict_field(model_thermal, model_elastic, t_sec, resolution=100):
             V_out.reshape(resolution, resolution))
 
 def main():
-    parser = argparse.ArgumentParser(description='PINN Inference')
-    parser.add_argument('--checkpoint', type=str, required=True,
-                        help='Path to Phase B checkpoint')
-    parser.add_argument('--field', action='store_true',
-                        help='Generate full field prediction')
-    parser.add_argument('--x', type=float, default=7.0,
-                        help='x coordinate in mm (for point prediction)')
-    parser.add_argument('--y', type=float, default=0.0,
-                        help='y coordinate in mm (for point prediction)')
-    parser.add_argument('--time', type=float, required=True,
-                        help='Time in seconds')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--checkpoint', type=str, required=True)
+    parser.add_argument('--field', action='store_true')
+    parser.add_argument('--time', type=float, required=True)
     args = parser.parse_args()
     
-    print(f"\nLoading models from: {args.checkpoint}")
-    model_thermal, model_elastic = load_models(args.checkpoint)
-    print("✓ Models loaded\n")
+    print(f"\nLoading model from: {args.checkpoint}")
+    model = load_model(args.checkpoint)
+    print("✓ Model loaded\n")
     
     if args.field:
-        print(f"Generating field predictions at t = {args.time} s...")
-        XX, YY, T_g, U_g, V_g = predict_field(model_thermal, model_elastic, args.time)
+        print(f"Generating field at t = {args.time} s...")
+        XX, YY, T_g, U_g, V_g = predict_field(model, args.time)
         
-        # Plot
         fig, axes = plt.subplots(1, 3, figsize=(18, 6))
         
         cf0 = axes[0].contourf(XX, YY, T_g, levels=50, cmap='hot')
@@ -164,17 +100,6 @@ def main():
         filename = f'inference_t{args.time:.0f}s.png'
         plt.savefig(filename, dpi=150)
         print(f"✓ Plot saved: {filename}\n")
-        
-    else:
-        print(f"Predicting at point ({args.x}, {args.y}) mm, t = {args.time} s")
-        T_C, u_um, v_um = predict_point(model_thermal, model_elastic, 
-                                        args.x, args.y, args.time)
-        
-        print("\nResults:")
-        print(f"  Temperature: {T_C:>10.2f} °C")
-        print(f"  u-displacement: {u_um:>10.4f} µm")
-        print(f"  v-displacement: {v_um:>10.4f} µm")
-        print()
 
 if __name__ == '__main__':
     main()
