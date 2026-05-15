@@ -113,7 +113,7 @@ N_BC_RIGHT   = 600       # INCREASED from 300
 N_INTERFACE  = 500       # Points per interface
 
 # Validation
-N_VALIDATION = 5000      # INCREASED from 2000 (larger validation set)
+N_VALIDATION = 1000      # Reduced: validation runs every VAL_EVAL_EVERY epochs
 
 # PDE mini-batch size — only this many points used per epoch for PDE losses.
 # Prevents OOM caused by second-order autograd graph over all 20k points at once.
@@ -153,7 +153,8 @@ CURRICULUM_STAGES = {
 # ═════════════════════════════════════════════════════════════════════════════
 # VALIDATION AND EARLY STOPPING
 # ═════════════════════════════════════════════════════════════════════════════
-VALIDATION_EVERY  = 10         # Validate every 10 epochs
+VALIDATION_EVERY  = 10         # Validate every 10 epochs (kept for early stopping)
+VAL_EVAL_EVERY    = 10         # Recompute validation loss every N epochs; reuse cached ratio between
 EARLY_STOP_PATIENCE = 500      # Stop if no improvement for 500 epochs
 EARLY_STOP_MIN_DELTA = 1e-6    # Minimum improvement threshold
 EARLY_STOP_LOSS_THRESHOLD = 1e-2  # Stop if both train and val < 1e-2

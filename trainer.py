@@ -19,8 +19,8 @@ import time
 
 from config import (DEVICE, CURRICULUM_STAGES, N_EPOCHS_ADAM, N_EPOCHS_LBFGS,
                     LR_ADAM, LR_ADAM_MIN, WEIGHT_DECAY, SWA_START, SWA_LR,
-                    N_ADAM_AFTER_SWA, VALIDATION_EVERY, EARLY_STOP_PATIENCE,
-                    EARLY_STOP_MIN_DELTA, EARLY_STOP_LOSS_THRESHOLD,
+                    N_ADAM_AFTER_SWA, VALIDATION_EVERY, VAL_EVAL_EVERY,
+                    EARLY_STOP_PATIENCE, EARLY_STOP_MIN_DELTA, EARLY_STOP_LOSS_THRESHOLD,
                     LBFGS_SWITCH_TRAIN_LOSS, LBFGS_SWITCH_VAL_RATIO,
                     SAVE_EVERY, CKPT_DIR, PDE_BATCH_SIZE)
 from losses_updated import *
@@ -124,6 +124,9 @@ def train_with_adam(model, data, optimizer, scheduler, swa_model, swa_scheduler,
     best_val_loss = float('inf')
     patience_counter = 0
     best_epoch = 0
+    cached_val_loss_tensor = None
+    cached_val_loss_value = 0.0
+    cached_ratio = 0.0
     switched_to_lbfgs = False
     
     t0_total = time.time()
@@ -146,23 +149,26 @@ def train_with_adam(model, data, optimizer, scheduler, swa_model, swa_scheduler,
         
         total_loss, loss_dict = compute_all_losses(model, data, active, w, interface_normalizer)
         
-        # Adaptive validation loss (always computed for ratio monitoring)
-        val_loss_tensor = compute_validation_loss(model, *data['validation'])
-        val_loss_value = val_loss_tensor.item()
-        history['validation'].append(val_loss_value)
-
+        # Recompute validation every VAL_EVAL_EVERY epochs; reuse cached values in between
         train_loss = loss_dict['total']
-        ratio = val_loss_value / (train_loss + 1e-12)
+        if epoch % VAL_EVAL_EVERY == 0:
+            cached_val_loss_tensor = compute_validation_loss(model, *data['validation'])
+            cached_val_loss_value = cached_val_loss_tensor.item()
+            cached_ratio = cached_val_loss_value / (train_loss + 1e-12)
+
+        val_loss_value = cached_val_loss_value
+        history['validation'].append(val_loss_value)
+        ratio = cached_ratio
 
         if ratio > 10:
             val_weight = 0.2
         elif ratio > 5:
             val_weight = 0.1
         else:
-            val_weight = 0.05 if epoch % 10 == 0 else 0.0
+            val_weight = 0.05 if epoch % VAL_EVAL_EVERY == 0 else 0.0
 
-        if val_weight > 0.0:
-            total_loss = total_loss + val_weight * val_loss_tensor
+        if val_weight > 0.0 and cached_val_loss_tensor is not None:
+            total_loss = total_loss + val_weight * cached_val_loss_tensor
         
         # Backward
         total_loss.backward()
