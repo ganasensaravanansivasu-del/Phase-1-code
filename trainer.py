@@ -124,7 +124,6 @@ def train_with_adam(model, data, optimizer, scheduler, swa_model, swa_scheduler,
     best_val_loss = float('inf')
     patience_counter = 0
     best_epoch = 0
-    cached_val_loss_tensor = None
     cached_val_loss_value = 0.0
     cached_ratio = 0.0
     switched_to_lbfgs = False
@@ -149,26 +148,26 @@ def train_with_adam(model, data, optimizer, scheduler, swa_model, swa_scheduler,
         
         total_loss, loss_dict = compute_all_losses(model, data, active, w, interface_normalizer)
         
-        # Recompute validation every VAL_EVAL_EVERY epochs; reuse cached values in between
+        # Recompute validation every VAL_EVAL_EVERY epochs; reuse cached scalar in between.
+        # Gradient from validation is only applied on the epoch it is freshly computed —
+        # the graph is freed after backward(), so the tensor cannot be reused.
         train_loss = loss_dict['total']
         if epoch % VAL_EVAL_EVERY == 0:
-            cached_val_loss_tensor = compute_validation_loss(model, *data['validation'])
-            cached_val_loss_value = cached_val_loss_tensor.item()
+            val_loss_tensor = compute_validation_loss(model, *data['validation'])
+            cached_val_loss_value = val_loss_tensor.item()
             cached_ratio = cached_val_loss_value / (train_loss + 1e-12)
+
+            if cached_ratio > 10:
+                val_weight = 0.2
+            elif cached_ratio > 5:
+                val_weight = 0.1
+            else:
+                val_weight = 0.05
+            total_loss = total_loss + val_weight * val_loss_tensor
 
         val_loss_value = cached_val_loss_value
         history['validation'].append(val_loss_value)
         ratio = cached_ratio
-
-        if ratio > 10:
-            val_weight = 0.2
-        elif ratio > 5:
-            val_weight = 0.1
-        else:
-            val_weight = 0.05 if epoch % VAL_EVAL_EVERY == 0 else 0.0
-
-        if val_weight > 0.0 and cached_val_loss_tensor is not None:
-            total_loss = total_loss + val_weight * cached_val_loss_tensor
         
         # Backward
         total_loss.backward()
