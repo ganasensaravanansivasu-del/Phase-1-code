@@ -170,7 +170,7 @@ INTERFACE_NORM_EPSILON = 1e-6   # Numerical stability
 # ═════════════════════════════════════════════════════════════════════════════
 # CHECKPOINTING
 # ═════════════════════════════════════════════════════════════════════════════
-SAVE_EVERY = 500         # Save checkpoint every 500 epochs
+SAVE_EVERY = 50         # Save checkpoint every 500 epochs
 CKPT_DIR   = 'checkpoints'
 
 # ═════════════════════════════════════════════════════════════════════════════
