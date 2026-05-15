@@ -466,7 +466,8 @@ def compute_validation_loss(model, x_v, y_v, t_v):
     t_r = t_v.detach().requires_grad_(True)
 
     T_s, u_s, v_s = model(x_r, y_r, t_r)
-    props = get_props_star(x_r, y_r, T_s)
+    with torch.no_grad():
+        props = get_props_star(x_r.detach(), y_r.detach(), T_s.detach())
 
     # Thermal residual
     K_s = props['K_star']
@@ -508,4 +509,4 @@ def compute_validation_loss(model, x_v, y_v, t_v):
             - mu_s * (d2v_dx2 + d2v_dy2)
             + beta_s * dT_dy)
 
-    return (torch.mean(R_T**2) + torch.mean(R_ex**2 + R_ey**2)).item()
+    return torch.mean(R_T**2) + torch.mean(R_ex**2 + R_ey**2)
