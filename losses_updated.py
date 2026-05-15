@@ -47,20 +47,20 @@ def loss_ic(model, x_s, y_s, t_s):
 
 def loss_bc_thermal_top(model, x_s, y_s, t_s):
     """Top surface: Heat flux -K* ∂T*/∂y* = 1"""
-    y_r = y_s.requires_grad_(True)
+    y_r = y_s.detach().requires_grad_(True)
     T_s, _, _ = model(x_s, y_r, t_s)
-    
+
     with torch.no_grad():
         props = get_props_star(x_s.detach(), y_r.detach(), T_s.detach())
     K_s = props['K_star']
-    
+
     dT_dy = grad(T_s, y_r)
     return torch.mean((-K_s * dT_dy - 1.0)**2)
 
 
 def loss_bc_thermal_bottom(model, x_s, y_s, t_s):
     """Bottom surface: INSULATED ∂T*/∂y* = 0 (CORRECTED - no heat flux)"""
-    y_r = y_s.requires_grad_(True)
+    y_r = y_s.detach().requires_grad_(True)
     T_s, _, _ = model(x_s, y_r, t_s)
     dT_dy = grad(T_s, y_r)
     return torch.mean(dT_dy**2)
@@ -68,7 +68,7 @@ def loss_bc_thermal_bottom(model, x_s, y_s, t_s):
 
 def loss_bc_thermal_left(model, x_s, y_s, t_s):
     """Left symmetry: ∂T*/∂x* = 0"""
-    x_r = x_s.requires_grad_(True)
+    x_r = x_s.detach().requires_grad_(True)
     T_s, _, _ = model(x_r, y_s, t_s)
     dT_dx = grad(T_s, x_r)
     return torch.mean(dT_dx**2)
@@ -76,7 +76,7 @@ def loss_bc_thermal_left(model, x_s, y_s, t_s):
 
 def loss_bc_thermal_right(model, x_s, y_s, t_s):
     """Right edge: INSULATED ∂T*/∂x* = 0 (CORRECTED - no radiation)"""
-    x_r = x_s.requires_grad_(True)
+    x_r = x_s.detach().requires_grad_(True)
     T_s, _, _ = model(x_r, y_s, t_s)
     dT_dx = grad(T_s, x_r)
     return torch.mean(dT_dx**2)
@@ -84,8 +84,8 @@ def loss_bc_thermal_right(model, x_s, y_s, t_s):
 
 def loss_bc_thermal_inner(model, x_s, y_s, t_s, nx, ny):
     """Inner wall: Robin convection BC"""
-    x_r = x_s.requires_grad_(True)
-    y_r = y_s.requires_grad_(True)
+    x_r = x_s.detach().requires_grad_(True)
+    y_r = y_s.detach().requires_grad_(True)
     T_s, _, _ = model(x_r, y_r, t_s)
     
     with torch.no_grad():
@@ -106,8 +106,8 @@ def loss_bc_thermal_inner(model, x_s, y_s, t_s, nx, ny):
 
 def loss_bc_elastic_top(model, x_s, y_s, t_s):
     """Top surface: traction-free"""
-    x_r = x_s.requires_grad_(True)
-    y_r = y_s.requires_grad_(True)
+    x_r = x_s.detach().requires_grad_(True)
+    y_r = y_s.detach().requires_grad_(True)
     
     T_s, u_s, v_s = model(x_r, y_r, t_s)
     
@@ -135,8 +135,8 @@ def loss_bc_elastic_top(model, x_s, y_s, t_s):
 
 def loss_bc_elastic_bottom(model, x_s, y_s, t_s):
     """Bottom surface: traction-free"""
-    x_r = x_s.requires_grad_(True)
-    y_r = y_s.requires_grad_(True)
+    x_r = x_s.detach().requires_grad_(True)
+    y_r = y_s.detach().requires_grad_(True)
     
     T_s, u_s, v_s = model(x_r, y_r, t_s)
     
@@ -170,8 +170,8 @@ def loss_bc_elastic_left(model, x_s, y_s, t_s):
 
 def loss_bc_elastic_right(model, x_s, y_s, t_s):
     """Right edge: traction-free"""
-    x_r = x_s.requires_grad_(True)
-    y_r = y_s.requires_grad_(True)
+    x_r = x_s.detach().requires_grad_(True)
+    y_r = y_s.detach().requires_grad_(True)
     
     T_s, u_s, v_s = model(x_r, y_r, t_s)
     
@@ -199,8 +199,8 @@ def loss_bc_elastic_right(model, x_s, y_s, t_s):
 
 def loss_bc_elastic_inner(model, x_s, y_s, t_s, nx, ny):
     """Inner wall: traction-free"""
-    x_r = x_s.requires_grad_(True)
-    y_r = y_s.requires_grad_(True)
+    x_r = x_s.detach().requires_grad_(True)
+    y_r = y_s.detach().requires_grad_(True)
     
     T_s, u_s, v_s = model(x_r, y_r, t_s)
     
@@ -236,9 +236,9 @@ def loss_bc_elastic_inner(model, x_s, y_s, t_s, nx, ny):
 
 def loss_thermal_pde(model, x_s, y_s, t_s):
     """Thermal GDE: 1/Fo · ρ* cp* ∂T*/∂t* - ∇*(K* ∇*T*) = 0"""
-    x_r = x_s.requires_grad_(True)
-    y_r = y_s.requires_grad_(True)
-    t_r = t_s.requires_grad_(True)
+    x_r = x_s.detach().requires_grad_(True)
+    y_r = y_s.detach().requires_grad_(True)
+    t_r = t_s.detach().requires_grad_(True)
     
     T_s, _, _ = model(x_r, y_r, t_r)
     
@@ -263,8 +263,8 @@ def loss_thermal_pde(model, x_s, y_s, t_s):
 
 def loss_elastic_pde(model, x_s, y_s, t_s):
     """Elastic GDE with thermal forcing"""
-    x_r = x_s.requires_grad_(True)
-    y_r = y_s.requires_grad_(True)
+    x_r = x_s.detach().requires_grad_(True)
+    y_r = y_s.detach().requires_grad_(True)
     
     T_s, u_s, v_s = model(x_r, y_r, t_s)
     
@@ -339,8 +339,8 @@ class InterfaceNormalizer:
 def loss_single_interface(model, xm, ym, xp, yp, t_if, nx, ny):
     """Interface conditions at single material boundary"""
     # Minus side
-    xm_r = xm.requires_grad_(True)
-    ym_r = ym.requires_grad_(True)
+    xm_r = xm.detach().requires_grad_(True)
+    ym_r = ym.detach().requires_grad_(True)
     
     Tm, um, vm = model(xm_r, ym_r, t_if)
     
@@ -360,8 +360,8 @@ def loss_single_interface(model, xm, ym, xp, yp, t_if, nx, ny):
     dvm_dy = grad(vm, ym_r)
     
     # Plus side
-    xp_r = xp.requires_grad_(True)
-    yp_r = yp.requires_grad_(True)
+    xp_r = xp.detach().requires_grad_(True)
+    yp_r = yp.detach().requires_grad_(True)
     
     Tp, up, vp = model(xp_r, yp_r, t_if)
     
