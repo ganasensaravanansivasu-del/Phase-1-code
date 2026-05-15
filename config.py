@@ -88,18 +88,18 @@ T_STAR_MAX = T_MAX / t_REF  # Dimensionless max time
 # NETWORK ARCHITECTURE (REDUCED FOR OVERFITTING)
 # ═════════════════════════════════════════════════════════════════════════════
 HIDDEN_LAYERS  = 4       # REDUCED from 5 (less capacity to overfit)
-HIDDEN_NEURONS = 128     # REDUCED from 256 (less memorization)
+HIDDEN_NEURONS = 96      # REDUCED from 128
 DROPOUT_RATE   = 0.1     # 10% dropout for regularization
 
 # Fourier Features
 FF_SIGMA    = [1.0, 5.0, 10.0]  # Multi-scale frequency bands
-FF_FEATURES = 128                # Features per scale
-# Total embedding dim: 2 * 128 * 3 = 768
+FF_FEATURES = 96                 # Features per scale
+# Total embedding dim: 2 * 96 * 3 = 576
 
 # ═════════════════════════════════════════════════════════════════════════════
 # COLLOCATION POINTS (INCREASED FOR OVERFITTING)
 # ═════════════════════════════════════════════════════════════════════════════
-N_INTERIOR   = 20000     # INCREASED from 8000 (2.5× more for better coverage)
+N_INTERIOR   = 20000     # Full dataset kept in memory; PDE_BATCH_SIZE used during training
 N_IC         = 2000      # Initial condition points (t*=0)
 
 # Boundary points
@@ -114,6 +114,10 @@ N_INTERFACE  = 500       # Points per interface
 
 # Validation
 N_VALIDATION = 5000      # INCREASED from 2000 (larger validation set)
+
+# PDE mini-batch size — only this many points used per epoch for PDE losses.
+# Prevents OOM caused by second-order autograd graph over all 20k points at once.
+PDE_BATCH_SIZE = 2000
 
 # Interface-biased sampling
 INTERFACE_BIAS_FRACTION = 0.40  # 40% of interior points near interfaces
@@ -149,7 +153,7 @@ CURRICULUM_STAGES = {
 # ═════════════════════════════════════════════════════════════════════════════
 # VALIDATION AND EARLY STOPPING
 # ═════════════════════════════════════════════════════════════════════════════
-VALIDATION_EVERY  = 50         # Validate every 50 epochs
+VALIDATION_EVERY  = 10         # Validate every 10 epochs
 EARLY_STOP_PATIENCE = 500      # Stop if no improvement for 500 epochs
 EARLY_STOP_MIN_DELTA = 1e-6    # Minimum improvement threshold
 EARLY_STOP_LOSS_THRESHOLD = 1e-2  # Stop if both train and val < 1e-2
