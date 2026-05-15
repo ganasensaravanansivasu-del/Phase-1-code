@@ -20,7 +20,7 @@ import time
 from config import (DEVICE, CURRICULUM_STAGES, N_EPOCHS_ADAM, N_EPOCHS_LBFGS,
                     LR_ADAM, LR_ADAM_MIN, WEIGHT_DECAY, SWA_START, SWA_LR,
                     N_ADAM_AFTER_SWA, VALIDATION_EVERY, EARLY_STOP_PATIENCE,
-                    EARLY_STOP_MIN_DELTA, EARLY_STOP_LOSS_THRESHOLD, VAL_LOSS_WEIGHT,
+                    EARLY_STOP_MIN_DELTA, EARLY_STOP_LOSS_THRESHOLD,
                     LBFGS_SWITCH_TRAIN_LOSS, LBFGS_SWITCH_VAL_RATIO,
                     SAVE_EVERY, CKPT_DIR, PDE_BATCH_SIZE)
 from losses_updated import *
@@ -146,15 +146,23 @@ def train_with_adam(model, data, optimizer, scheduler, swa_model, swa_scheduler,
         
         total_loss, loss_dict = compute_all_losses(model, data, active, w, interface_normalizer)
         
-        # Add validation loss to training (ANTI-OVERFITTING)
-        if epoch % VALIDATION_EVERY == 0:
-            val_loss_tensor = compute_validation_loss(model, *data['validation'])
-            val_loss_value = val_loss_tensor.item()
-            total_loss = total_loss + VAL_LOSS_WEIGHT * val_loss_tensor
-            history['validation'].append(val_loss_value)
+        # Adaptive validation loss (always computed for ratio monitoring)
+        val_loss_tensor = compute_validation_loss(model, *data['validation'])
+        val_loss_value = val_loss_tensor.item()
+        history['validation'].append(val_loss_value)
+
+        train_loss = loss_dict['total']
+        ratio = val_loss_value / (train_loss + 1e-12)
+
+        if ratio > 10:
+            val_weight = 0.2
+        elif ratio > 5:
+            val_weight = 0.1
         else:
-            history['validation'].append(history['validation'][-1] if history['validation'] else 0.0)
-            val_loss_value = history['validation'][-1]
+            val_weight = 0.05 if epoch % 10 == 0 else 0.0
+
+        if val_weight > 0.0:
+            total_loss = total_loss + val_weight * val_loss_tensor
         
         # Backward
         total_loss.backward()
