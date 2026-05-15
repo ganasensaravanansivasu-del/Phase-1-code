@@ -461,52 +461,51 @@ def compute_validation_loss(model, x_v, y_v, t_v):
     """
     Validation loss: thermal + elastic PDE residuals
     """
-    with torch.no_grad():
-        x_r = x_v.requires_grad_(True)
-        y_r = y_v.requires_grad_(True)
-        t_r = t_v.requires_grad_(True)
-        
-        T_s, u_s, v_s = model(x_r, y_r, t_r)
-        props = get_props_star(x_r, y_r, T_s)
-        
-        # Thermal residual
-        K_s = props['K_star']
-        rho_s = props['rho_star']
-        cp_s = props['cp_star']
-        
-        dT_dt = grad(T_s, t_r)
-        dT_dx = grad(T_s, x_r)
-        dT_dy = grad(T_s, y_r)
-        
-        d_KdTdx_dx = grad(K_s * dT_dx, x_r)
-        d_KdTdy_dy = grad(K_s * dT_dy, y_r)
-        
-        fo_inv = torch.tensor(float(FO_INV), dtype=torch.float32, device=DEVICE)
-        R_T = fo_inv * rho_s * cp_s * dT_dt - (d_KdTdx_dx + d_KdTdy_dy)
-        
-        # Elastic residual
-        lam_s = props['lam_star']
-        mu_s = props['mu_star']
-        beta_s = props['beta_star']
-        
-        du_dx = grad(u_s, x_r)
-        du_dy = grad(u_s, y_r)
-        dv_dx = grad(v_s, x_r)
-        dv_dy = grad(v_s, y_r)
-        
-        d2u_dx2 = grad(du_dx, x_r)
-        d2u_dy2 = grad(du_dy, y_r)
-        d2v_dx2 = grad(dv_dx, x_r)
-        d2v_dy2 = grad(dv_dy, y_r)
-        d2u_dxdy = grad(du_dx, y_r)
-        d2v_dxdy = grad(dv_dx, y_r)
-        
-        R_ex = (-(lam_s + mu_s) * (d2u_dx2 + d2v_dxdy)
-                - mu_s * (d2u_dx2 + d2u_dy2)
-                + beta_s * dT_dx)
-        
-        R_ey = (-(lam_s + mu_s) * (d2u_dxdy + d2v_dy2)
-                - mu_s * (d2v_dx2 + d2v_dy2)
-                + beta_s * dT_dy)
-        
-        return (torch.mean(R_T**2) + torch.mean(R_ex**2 + R_ey**2)).item()
+    x_r = x_v.detach().requires_grad_(True)
+    y_r = y_v.detach().requires_grad_(True)
+    t_r = t_v.detach().requires_grad_(True)
+
+    T_s, u_s, v_s = model(x_r, y_r, t_r)
+    props = get_props_star(x_r, y_r, T_s)
+
+    # Thermal residual
+    K_s = props['K_star']
+    rho_s = props['rho_star']
+    cp_s = props['cp_star']
+
+    dT_dt = grad(T_s, t_r)
+    dT_dx = grad(T_s, x_r)
+    dT_dy = grad(T_s, y_r)
+
+    d_KdTdx_dx = grad(K_s * dT_dx, x_r)
+    d_KdTdy_dy = grad(K_s * dT_dy, y_r)
+
+    fo_inv = torch.tensor(float(FO_INV), dtype=torch.float32, device=DEVICE)
+    R_T = fo_inv * rho_s * cp_s * dT_dt - (d_KdTdx_dx + d_KdTdy_dy)
+
+    # Elastic residual
+    lam_s = props['lam_star']
+    mu_s = props['mu_star']
+    beta_s = props['beta_star']
+
+    du_dx = grad(u_s, x_r)
+    du_dy = grad(u_s, y_r)
+    dv_dx = grad(v_s, x_r)
+    dv_dy = grad(v_s, y_r)
+
+    d2u_dx2 = grad(du_dx, x_r)
+    d2u_dy2 = grad(du_dy, y_r)
+    d2v_dx2 = grad(dv_dx, x_r)
+    d2v_dy2 = grad(dv_dy, y_r)
+    d2u_dxdy = grad(du_dx, y_r)
+    d2v_dxdy = grad(dv_dx, y_r)
+
+    R_ex = (-(lam_s + mu_s) * (d2u_dx2 + d2v_dxdy)
+            - mu_s * (d2u_dx2 + d2u_dy2)
+            + beta_s * dT_dx)
+
+    R_ey = (-(lam_s + mu_s) * (d2u_dxdy + d2v_dy2)
+            - mu_s * (d2v_dx2 + d2v_dy2)
+            + beta_s * dT_dy)
+
+    return (torch.mean(R_T**2) + torch.mean(R_ex**2 + R_ey**2)).item()
