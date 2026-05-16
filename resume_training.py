@@ -39,14 +39,18 @@ def main():
     
     checkpoint = torch.load(args.checkpoint, map_location=DEVICE)
     start_epoch = checkpoint['epoch'] + 1
-    
+    start_stage = checkpoint.get('current_stage', 1)
+    start_stage2_count = checkpoint.get('stage2_converged_count', 0)
+
     data = prepare_data()
     model = PINNModel().to(DEVICE)
     model.load_state_dict(checkpoint['model_state_dict'])
-    
-    print(f"Resuming from epoch {start_epoch}\n")
-    
-    model, history = train_model(model, data, start_epoch=start_epoch)
+
+    print(f"Resuming from epoch {start_epoch}, stage {start_stage}\n")
+
+    model, history = train_model(model, data, start_epoch=start_epoch,
+                                 start_stage=start_stage,
+                                 start_stage2_count=start_stage2_count)
     
     print("\n" + "="*80)
     print("  TRAINING COMPLETE")

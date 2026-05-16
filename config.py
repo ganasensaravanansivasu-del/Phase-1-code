@@ -153,18 +153,24 @@ CURRICULUM_STAGES = {
 # ═════════════════════════════════════════════════════════════════════════════
 # VALIDATION AND EARLY STOPPING
 # ═════════════════════════════════════════════════════════════════════════════
-VALIDATION_EVERY  = 10         # Validate every 10 epochs (kept for early stopping)
-VAL_EVAL_EVERY    = 10         # Recompute validation loss every N epochs; reuse cached ratio between
-EARLY_STOP_PATIENCE = 500      # Stop if no improvement for 500 epochs
-EARLY_STOP_MIN_DELTA = 1e-6    # Minimum improvement threshold
-EARLY_STOP_LOSS_THRESHOLD = 1e-2  # Stop if both train and val < 1e-2
+VAL_EVAL_EVERY = 10    # Recompute validation every N epochs; reuse cached ratio between
 
-# Adam → L-BFGS switch criterion (wait for validation to converge)
-LBFGS_SWITCH_TRAIN_LOSS = 1e-3  # Training loss threshold
-LBFGS_SWITCH_VAL_RATIO = 10.0   # Validation must be within 10× of training
+# ── Stage 1 (Adam, BC only) ──────────────────────────────────────────────────
+# Exit stage 1 early when BOTH conditions hold for a single epoch
+STAGE1_LOSS_THRESHOLD = 2e-3
+STAGE1_RATIO_THRESHOLD = 7.0
 
-# Validation loss weight in training (prevents overfitting)
-VAL_LOSS_WEIGHT = 0.1  # Add 10% of validation loss to training loss
+# ── Stage 2 (Adam, BC + PDE) → L-BFGS switch ────────────────────────────────
+# Switch to L-BFGS when BOTH conditions hold for this many consecutive epochs
+STAGE2_LOSS_THRESHOLD  = 1e-3
+STAGE2_RATIO_THRESHOLD = 7.0
+STAGE2_CONVERGE_EPOCHS = 10
+
+# ── Stage 3 (L-BFGS) ─────────────────────────────────────────────────────────
+# Stop when BOTH conditions hold for this many consecutive epochs
+LBFGS_LOSS_THRESHOLD  = 5e-5
+LBFGS_RATIO_THRESHOLD = 7.0
+LBFGS_CONVERGE_EPOCHS = 10
 
 # ═════════════════════════════════════════════════════════════════════════════
 # INTERFACE NORMALIZATION
@@ -205,8 +211,9 @@ def print_config():
     print(f"  Interior points: {N_INTERIOR:,} (2.5× increase)")
     print(f"  Validation points: {N_VALIDATION:,} (2.5× increase)")
     print(f"  Weight decay (L2): {WEIGHT_DECAY}")
-    print(f"  Validation loss weight: {VAL_LOSS_WEIGHT:.0%}")
-    print(f"  Early stop threshold: {EARLY_STOP_LOSS_THRESHOLD}")
+    print(f"  Stage 1 stop:   loss < {STAGE1_LOSS_THRESHOLD:.0e}, ratio < {STAGE1_RATIO_THRESHOLD}")
+    print(f"  Stage 2→LBFGS: loss < {STAGE2_LOSS_THRESHOLD:.0e}, ratio < {STAGE2_RATIO_THRESHOLD} for {STAGE2_CONVERGE_EPOCHS} epochs")
+    print(f"  L-BFGS stop:   loss < {LBFGS_LOSS_THRESHOLD:.0e},  ratio < {LBFGS_RATIO_THRESHOLD} for {LBFGS_CONVERGE_EPOCHS} epochs")
     print(f"\nTime Sampling (Non-Uniform):")
     print(f"  0-2s (transient): 50% of points")
     print(f"  2-4s (moderate): 30% of points")
