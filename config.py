@@ -72,6 +72,7 @@ Y_MAX_STAR    = Y_MAX / L_REF     # CORRECTED: = +1.0 (was +2.0)
 Q_TOP    = 10.0e6        # Heat flux on top surface [W/m²] - ONLY TOP!
 T_COOL   = 293.0         # Coolant temperature [K]
 T_COOL_STAR = (T_COOL - T_REF) / DT_REF  # Dimensionless coolant temp
+Q_TOP_STAR  = Q_TOP * L_REF / (K_REF * DT_REF)  # Dimensionless top heat flux ≈ 0.4667
 
 # Dimensionless parameters
 FO_INV = 1.0 / 1.0       # Inverse Fourier number (= 1 by design)
@@ -157,7 +158,7 @@ VAL_EVAL_EVERY = 10    # Recompute validation every N epochs; reuse cached ratio
 
 # ── Stage 1 (Adam, BC only) ──────────────────────────────────────────────────
 # Exit stage 1 early when BOTH conditions hold for a single epoch
-STAGE1_LOSS_THRESHOLD = 2e-3
+STAGE1_LOSS_THRESHOLD = 5e-3
 STAGE1_RATIO_THRESHOLD = 7.0
 
 # ── Stage 2 (Adam, BC + PDE) → L-BFGS switch ────────────────────────────────

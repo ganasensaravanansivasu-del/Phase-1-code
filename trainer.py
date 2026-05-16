@@ -255,10 +255,9 @@ def train_with_lbfgs(model, data, interface_normalizer, history, start_epoch, ma
         model.train()
         ep_t0 = time.time()
 
-        w = model.get_loss_weights()
-
         def closure():
             optimizer.zero_grad()
+            w = model.get_loss_weights()  # recomputed each call — avoids stale graph
             loss, _ = compute_all_losses(model, data, active, w, interface_normalizer)
             loss.backward()
             return loss
@@ -266,6 +265,7 @@ def train_with_lbfgs(model, data, interface_normalizer, history, start_epoch, ma
         optimizer.step(closure)
 
         # Recompute for logging — cannot use no_grad because PDE losses need autograd
+        w = model.get_loss_weights()
         _, loss_dict = compute_all_losses(model, data, active, w, interface_normalizer)
         train_loss = loss_dict['total']
         ep_time = time.time() - ep_t0

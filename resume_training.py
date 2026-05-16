@@ -24,6 +24,8 @@ def set_seed(seed):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--checkpoint', type=str, required=True)
+    parser.add_argument('--stage', type=int, default=None,
+                        help='Force starting stage (1 or 2). Overrides checkpoint value.')
     args = parser.parse_args()
     
     if not os.path.exists(args.checkpoint):
@@ -41,6 +43,11 @@ def main():
     start_epoch = checkpoint['epoch'] + 1
     start_stage = checkpoint.get('current_stage', 1)
     start_stage2_count = checkpoint.get('stage2_converged_count', 0)
+
+    if args.stage is not None:
+        start_stage = args.stage
+        start_stage2_count = 0
+        print(f"  [Override] Forcing start stage to {start_stage}")
 
     data = prepare_data()
     model = PINNModel().to(DEVICE)

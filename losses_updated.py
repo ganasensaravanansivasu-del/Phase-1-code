@@ -46,16 +46,21 @@ def loss_ic(model, x_s, y_s, t_s):
 # ═════════════════════════════════════════════════════════════════════════════
 
 def loss_bc_thermal_top(model, x_s, y_s, t_s):
-    """Top surface: Heat flux -K* ∂T*/∂y* = 1"""
+    """Top surface: Heat flux K* ∂T*/∂y* = Q* (heat flows IN, downward)"""
     y_r = y_s.detach().requires_grad_(True)
     T_s, _, _ = model(x_s, y_r, t_s)
-
+    
     with torch.no_grad():
         props = get_props_star(x_s.detach(), y_r.detach(), T_s.detach())
     K_s = props['K_star']
-
+    
     dT_dy = grad(T_s, y_r)
-    return torch.mean((-K_s * dT_dy - 1.0)**2)
+    
+    # Heat flux BC: K* ∂T*/∂y* = Q* (heat flows downward into solid)
+    from config import Q_TOP_STAR
+    Q_tensor = torch.tensor(float(Q_TOP_STAR), dtype=torch.float32, device=DEVICE)
+    
+    return torch.mean((K_s * dT_dy - Q_tensor)**2)
 
 
 def loss_bc_thermal_bottom(model, x_s, y_s, t_s):
@@ -461,13 +466,12 @@ def compute_validation_loss(model, x_v, y_v, t_v):
     """
     Validation loss: thermal + elastic PDE residuals
     """
-    x_r = x_v.detach().requires_grad_(True)
-    y_r = y_v.detach().requires_grad_(True)
-    t_r = t_v.detach().requires_grad_(True)
+    x_r = x_v.detach().detach().requires_grad_(True)
+    y_r = y_v.detach().detach().requires_grad_(True)
+    t_r = t_v.detach().detach().requires_grad_(True)
 
     T_s, u_s, v_s = model(x_r, y_r, t_r)
-    with torch.no_grad():
-        props = get_props_star(x_r.detach(), y_r.detach(), T_s.detach())
+    props = get_props_star(x_r, y_r, T_s)
 
     # Thermal residual
     K_s = props['K_star']
